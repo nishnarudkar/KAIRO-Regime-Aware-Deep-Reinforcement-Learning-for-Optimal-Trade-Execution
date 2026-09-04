@@ -78,15 +78,22 @@ regime-aware-trade-execution/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/regime-aware-trade-execution.git
+git clone https://github.com/nishnarudkar/KAIRO-Regime-Aware-Deep-Reinforcement-Learning-for-Optimal-Trade-Execution.git
 cd regime-aware-trade-execution
 
 # Create virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install development dependencies
-pip install -r requirements.txt
+# Configure Alpaca Credentials in .env file
+echo "ALPACA_API_KEY_ID=your_alpaca_key_id" >> .env
+echo "ALPACA_SECRET_KEY=your_alpaca_secret_key" >> .env
+
+# Run Historical Market Data Pipeline (Fetch 5 days of 1-min AAPL bars)
+python scripts/download_data.py --symbol AAPL --days 5
+
+# Run Unit Tests & Anti-Lookahead Leakage Verification
+pytest -v tests/test_data_pipeline.py
 ```
 
 ---
