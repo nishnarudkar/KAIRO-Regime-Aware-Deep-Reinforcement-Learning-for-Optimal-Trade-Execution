@@ -43,11 +43,13 @@ regime-aware-trade-execution/
 ├── data/                    # Market dataset storage (raw, processed, synthetic)
 ├── docs/                    # Architectural diagrams, MDP specifications, research specs
 ├── src/                     # Core Python modules
-│   ├── data/                # Data pipelines, feature engineering, synthetic generators
+│   ├── data/                # Data loaders and ingestion pipelines
+│   ├── features/            # Feature engineering (volatility, spread, OFI)
 │   ├── regimes/             # HMM regime identification & volatility models
-│   ├── env/                 # Gymnasium optimal execution environment & reward design
-│   ├── baselines/           # TWAP, VWAP, POV implementation baselines
+│   ├── environment/         # Gymnasium optimal execution MDP environment & reward design
+│   ├── execution/           # Market impact models (Almgren-Chriss) & execution engines
 │   ├── agents/              # SB3 wrappers & regime-aware routing logic
+│   ├── baselines/           # TWAP, VWAP, POV implementation baselines
 │   ├── evaluation/          # Backtester, analytics, Implementation Shortfall calc
 │   ├── api/                 # FastAPI REST services & execution engine endpoints
 │   └── utils/               # Logging, metrics, seed setters, MLflow helpers
