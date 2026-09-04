@@ -1,0 +1,17 @@
+regimes:
+  num_regimes: 4
+  labels:
+    0: "Low Volatility"
+    1: "Normal"
+    2: "High Volatility"
+    3: "Stress"
+  hmm:
+    n_components: 4
+    covariance_type: "full"
+    n_iter: 100
+    random_state: 42
+  features:
+    - "realized_volatility_15m"
+    - "log_returns_5m"
+    - "bid_ask_spread_norm"
+    - "relative_volume_1h"

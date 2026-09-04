@@ -1,0 +1,16 @@
+environment:
+  max_steps: 60
+  time_horizon_seconds: 3600
+  initial_inventory: 10000
+  action_fractions: [0.0, 0.10, 0.25, 0.50]
+
+impact_model:
+  type: "almgren_chriss"
+  eta: 1.0e-5    # Temporary impact parameter
+  gamma: 2.5e-6  # Permanent impact parameter
+
+reward:
+  lambda_shortfall: 1.0
+  lambda_impact: 1.0
+  lambda_inventory_risk: 1.0e-4
+  lambda_terminal_penalty: 10.0

@@ -1,0 +1,13 @@
+default:
+  project_name: "regime-aware-trade-execution"
+  seed: 42
+  log_level: "INFO"
+
+data:
+  raw_path: "data/raw"
+  processed_path: "data/processed"
+  synthetic_path: "data/synthetic"
+  time_frame: "1m"
+  train_split: 0.6
+  val_split: 0.2
+  test_split: 0.2
