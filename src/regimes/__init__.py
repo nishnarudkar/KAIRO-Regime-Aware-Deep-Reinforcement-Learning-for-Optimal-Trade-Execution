@@ -1,25 +1,24 @@
 """
-Regime Detection Engine module interfaces (HMM & Volatility classifiers).
+Regime Detection Engine module interfaces, features, HMM model, causal inference, and evaluation.
 """
 
-from abc import ABC, abstractmethod
-import numpy as np
-import pandas as pd
+from src.regimes.features import (
+    RegimeFeatureEngine,
+    RegimeFeatureScaler,
+    chronological_split,
+    DEFAULT_REGIME_FEATURES,
+)
+from src.regimes.hmm_model import MarketHMM, CANONICAL_REGIME_LABELS
+from src.regimes.inference import CausalRegimeInference
+from src.regimes.evaluation import RegimeEvaluator
 
-class BaseRegimeDetector(ABC):
-    """Abstract interface for market regime detection."""
-
-    @abstractmethod
-    def fit(self, features: pd.DataFrame) -> None:
-        """Fit regime model on historical training features."""
-        pass
-
-    @abstractmethod
-    def predict_regime(self, features: pd.DataFrame) -> np.ndarray:
-        """Predict discrete market regime IDs (0..K-1)."""
-        pass
-
-    @abstractmethod
-    def predict_proba(self, features: pd.DataFrame) -> np.ndarray:
-        """Predict soft regime posterior probability distribution."""
-        pass
+__all__ = [
+    "RegimeFeatureEngine",
+    "RegimeFeatureScaler",
+    "chronological_split",
+    "DEFAULT_REGIME_FEATURES",
+    "MarketHMM",
+    "CANONICAL_REGIME_LABELS",
+    "CausalRegimeInference",
+    "RegimeEvaluator",
+]
