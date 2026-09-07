@@ -3,7 +3,6 @@ Gymnasium MDP Optimal Trade Execution Environment interfaces.
 """
 
 from abc import ABC, abstractmethod
-import numpy as np
 
 class BaseRewardCalculator(ABC):
     """Abstract interface for execution penalty and reward functions."""
@@ -20,3 +19,13 @@ class BaseRewardCalculator(ABC):
     ) -> float:
         """Compute execution reward penalizing shortfall, impact, and risk."""
         pass
+
+
+from src.environment.rewards import ModularExecutionReward
+from src.environment.env import TradeExecutionEnv
+
+__all__ = [
+    "BaseRewardCalculator",
+    "ModularExecutionReward",
+    "TradeExecutionEnv",
+]

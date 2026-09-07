@@ -1,16 +1,20 @@
 environment:
-  max_steps: 60
-  time_horizon_seconds: 3600
-  initial_inventory: 10000
+  max_steps: 30
+  time_horizon_seconds: 1800
+  initial_inventory: 100000
   action_fractions: [0.0, 0.10, 0.25, 0.50]
+  max_participation_rate: 0.15
+  default_spread_bps: 2.0
 
 impact_model:
   type: "almgren_chriss"
-  eta: 1.0e-5    # Temporary impact parameter
-  gamma: 2.5e-6  # Permanent impact parameter
+  eta: 0.05      # Temporary impact parameter
+  gamma: 0.01    # Permanent impact parameter
+  alpha: 0.5     # Power law exponent for volume fraction
 
 reward:
-  lambda_shortfall: 1.0
+  lambda_cost: 1.0
   lambda_impact: 1.0
-  lambda_inventory_risk: 1.0e-4
-  lambda_terminal_penalty: 10.0
+  lambda_risk: 1.0e-4
+  lambda_fee: 1.0
+  lambda_terminal: 10.0

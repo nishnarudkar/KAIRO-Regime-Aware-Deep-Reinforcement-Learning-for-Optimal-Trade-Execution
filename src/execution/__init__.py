@@ -1,13 +1,23 @@
 """
-Execution engines, market impact models (Almgren-Chriss), and transaction cost accounting.
+Execution engines, market impact models (Almgren-Chriss, Linear), and transaction cost accounting.
 """
 
-from abc import ABC, abstractmethod
+from src.execution.impact_models import (
+    BaseImpactModel,
+    LinearImpactModel,
+    AlmgrenChrissImpactModel,
+)
+from src.execution.simulator import (
+    ExecutionSimulator,
+    StepResult,
+    ExecutionSummary,
+)
 
-class BaseImpactModel(ABC):
-    """Abstract interface for temporary and permanent market impact calculation."""
-
-    @abstractmethod
-    def calculate_impact(self, trade_size: float, volume: float, volatility: float) -> float:
-        """Calculate price impact for a given trade action."""
-        pass
+__all__ = [
+    "BaseImpactModel",
+    "LinearImpactModel",
+    "AlmgrenChrissImpactModel",
+    "ExecutionSimulator",
+    "StepResult",
+    "ExecutionSummary",
+]
