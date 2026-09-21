@@ -28,9 +28,15 @@ Flags
 --results-dir STR           Output directory (default: results)
 """
 
+import os
+
+# One thread per worker process: without this every worker spawns a BLAS thread pool
+# sized to the machine and parallel runs exhaust memory. Must be set before numpy loads.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 import argparse
 import logging
-import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,9 +53,12 @@ def parse_args():
     from src.evaluation.scenarios import SCENARIOS
     parser = argparse.ArgumentParser(description="Stage 8 Research Experiment Suite")
     parser.add_argument("--scenarios",   nargs="+", default=list(SCENARIOS.keys()))
-    parser.add_argument("--seeds",       nargs="+", type=int, default=[42, 123, 777])
-    parser.add_argument("--timesteps",   type=int,  default=30_000)
+    parser.add_argument("--seeds",       nargs="+", type=int, default=[42, 123, 777, 2024, 31415])
+    parser.add_argument("--timesteps",   type=int,  default=60_000)
+    parser.add_argument("--jobs",        type=int,  default=1, help="parallel worker processes")
+    parser.add_argument("--n-bars",      type=int,  default=3000)
     parser.add_argument("--no-ablation", action="store_true")
+    parser.add_argument("--no-ppo",      action="store_true")
     parser.add_argument("--results-dir", type=str,  default="results")
     return parser.parse_args()
 
@@ -75,13 +84,17 @@ def main():
         results_dir=args.results_dir,
         verbose=0,
         run_ablation=not args.no_ablation,
+        include_ppo=not args.no_ppo,
+        n_bars=args.n_bars,
+        n_jobs=args.jobs,
     )
 
     logger.info("=" * 70)
     logger.info("Experiment suite complete.")
     logger.info(f"  Results written to: {os.path.abspath(args.results_dir)}/")
     logger.info("  Files: experiment_results.csv, summary_table.csv,")
-    logger.info("         comparison_table.csv, per_scenario_table.csv, rq_summary.json")
+    logger.info("         comparison_table.csv, per_scenario_table.csv, paired_comparisons.csv,")
+    logger.info("         window_results.csv, hmm_validation.csv, rq_summary.json, run_config.json")
     logger.info("=" * 70)
 
 

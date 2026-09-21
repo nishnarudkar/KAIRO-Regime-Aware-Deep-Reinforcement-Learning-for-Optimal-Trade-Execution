@@ -19,6 +19,11 @@ Primary research questions answered:
   RQ2: Does regime information improve RL execution?
 
 Results are logged to MLflow under experiment "stage7_ab_experiment".
+
+LEGACY DEMO: this module trains and evaluates on a single fixed 30-bar window of one short
+series. It is kept as a quick smoke-level demonstration only. Research claims must come from
+the unified suite (`scripts/run_experiments.py`, `src/evaluation/protocol.py`), which trains on
+random windows and evaluates on many paired out-of-sample windows with statistics.
 """
 
 from __future__ import annotations
@@ -49,27 +54,10 @@ DEFAULT_TRAIN_TIMESTEPS = 50_000
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _make_market_data(n: int = 200, seed: int = SEED) -> pd.DataFrame:
-    """Deterministic synthetic OHLCV market data."""
-    rng = np.random.default_rng(seed)
-    dates = pd.date_range("2025-01-02 09:30", periods=n, freq="1min")
-    close = 150.0 + np.cumsum(rng.normal(0, 0.05, n))
-    high = close + rng.uniform(0.02, 0.15, n)
-    low = close - rng.uniform(0.02, 0.15, n)
-    volume = rng.integers(30_000, 80_000, n).astype(float)
-    spread = rng.uniform(0.02, 0.06, n)
-    volatility = rng.uniform(0.001, 0.003, n)
+    """Synthetic regime-switching market (shared, realistic-scale generator)."""
+    from src.evaluation.scenarios import generate_scenario_data
+    return generate_scenario_data("normal", n_steps=n, seed=seed)
 
-    return pd.DataFrame({
-        "timestamp": dates,
-        "open":      close,
-        "high":      high,
-        "low":       low,
-        "close":     close,
-        "price":     close,
-        "volume":    volume,
-        "spread":    spread,
-        "volatility": volatility,
-    })
 
 
 def _compute_regime_features(df: pd.DataFrame):

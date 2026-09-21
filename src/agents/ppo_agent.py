@@ -110,7 +110,7 @@ class PPOAgent(BaseAgentWrapper):
 
     # ── BaseAgentWrapper interface ─────────────────────────────────────────────
 
-    def train(self, total_timesteps: int, callback=None) -> None:
+    def train(self, total_timesteps: int, callback=None, progress_bar: bool = False) -> None:
         """
         Train the PPO policy.
 
@@ -122,7 +122,7 @@ class PPOAgent(BaseAgentWrapper):
             total_timesteps=total_timesteps,
             callback=callback,
             reset_num_timesteps=True,
-            progress_bar=True,
+            progress_bar=progress_bar,
         )
 
     def predict(self, state: np.ndarray, deterministic: bool = True) -> int:

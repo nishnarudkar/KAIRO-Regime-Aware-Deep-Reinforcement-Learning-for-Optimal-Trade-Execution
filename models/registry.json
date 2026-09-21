@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "trained_at": "2026-09-21T20:14:16.255165+00:00",
+  "protocol": {
+    "train": "random 30-bar windows from the train region (first 70%) of all six scenarios",
+    "evaluation": "non-overlapping 30-bar windows over the test region (last 30%), paired vs TWAP",
+    "data_seed_base": 1000,
+    "n_bars": 3000,
+    "horizon_steps": 30,
+    "target_inventory": 100000.0
+  },
+  "models": {
+    "dqn_base": {
+      "timesteps": 200000,
+      "seed": 42,
+      "trained_at": "2026-09-21T20:14:16.255165+00:00",
+      "train_seconds": 431.4,
+      "evaluation": {
+        "is_bps_mean": 17.68554981967631,
+        "fill_rate_mean": 0.7964344305324229,
+        "n_windows": 180,
+        "vs_twap_bps": {
+          "n": 180,
+          "mean": -0.23931258406085681,
+          "ci_low": -6.473388059819802,
+          "ci_high": 5.798608157545142,
+          "p_value": 0.6234481337379787,
+          "win_rate": 0.5
+        }
+      }
+    },
+    "dqn_regime": {
+      "timesteps": 200000,
+      "seed": 42,
+      "trained_at": "2026-09-21T20:14:16.255165+00:00",
+      "train_seconds": 652.2,
+      "evaluation": {
+        "is_bps_mean": 16.861653701714914,
+        "fill_rate_mean": 0.8174680954536648,
+        "n_windows": 180,
+        "vs_twap_bps": {
+          "n": 180,
+          "mean": -1.063208702022259,
+          "ci_low": -7.568172372839843,
+          "ci_high": 5.472372240634872,
+          "p_value": 0.8569245756862025,
+          "win_rate": 0.36666666666666664
+        }
+      }
+    },
+    "ppo_base": {
+      "timesteps": 200000,
+      "seed": 42,
+      "trained_at": "2026-09-21T20:14:16.255165+00:00",
+      "train_seconds": 487.9,
+      "evaluation": {
+        "is_bps_mean": 16.76743983643093,
+        "fill_rate_mean": 0.8187835358907263,
+        "n_windows": 180,
+        "vs_twap_bps": {
+          "n": 180,
+          "mean": -1.157422567306239,
+          "ci_low": -7.76292725528345,
+          "ci_high": 5.454556461630033,
+          "p_value": 0.9913344509005022,
+          "win_rate": 0.35555555555555557
+        }
+      }
+    },
+    "ppo_regime": {
+      "timesteps": 200000,
+      "seed": 42,
+      "trained_at": "2026-09-21T20:14:16.255165+00:00",
+      "train_seconds": 684.6,
+      "evaluation": {
+        "is_bps_mean": 16.974350736079643,
+        "fill_rate_mean": 0.8191029637841231,
+        "n_windows": 180,
+        "vs_twap_bps": {
+          "n": 180,
+          "mean": -0.9505116676575271,
+          "ci_low": -8.17893263084028,
+          "ci_high": 6.338895888060642,
+          "p_value": 0.9809372310829583,
+          "win_rate": 0.35
+        }
+      }
+    }
+  },
+  "baselines": {
+    "TWAP": {
+      "is_bps_mean": 17.924862403737176,
+      "fill_rate_mean": 0.8162496851135133,
+      "n_windows": 180
+    },
+    "VWAP": {
+      "is_bps_mean": 17.894059837152863,
+      "fill_rate_mean": 0.8170992488645976,
+      "n_windows": 180,
+      "vs_twap_bps": {
+        "n": 180,
+        "mean": -0.030802566584313466,
+        "ci_low": -0.42857436694445633,
+        "ci_high": 0.3466846290961392,
+        "p_value": 0.6910954246865402,
+        "win_rate": 0.37222222222222223
+      }
+    },
+    "POV": {
+      "is_bps_mean": 16.940878854099033,
+      "fill_rate_mean": 0.7687082403570703,
+      "n_windows": 180,
+      "vs_twap_bps": {
+        "n": 180,
+        "mean": -0.983983549638136,
+        "ci_low": -7.277671890885813,
+        "ci_high": 5.152512848659378,
+        "p_value": 0.32290126004697606,
+        "win_rate": 0.6055555555555555
+      }
+    }
+  }
+}

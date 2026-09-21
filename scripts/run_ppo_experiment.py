@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+
+LEGACY DEMO: this script trains and evaluates on a single fixed 30-bar window of one short
+series. It is kept as a quick smoke-level demonstration only. Research claims must come from
+the unified suite (`scripts/run_experiments.py`, `src/evaluation/protocol.py`), which trains on
+random windows and evaluates on many paired out-of-sample windows with statistics.
 """
 scripts/run_ppo_experiment.py — Stage 9: Multi-Algorithm PPO Comparison
 

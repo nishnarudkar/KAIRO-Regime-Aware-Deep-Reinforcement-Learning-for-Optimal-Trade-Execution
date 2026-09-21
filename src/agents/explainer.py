@@ -16,14 +16,15 @@ import numpy as np
 
 
 # Standard and Regime State Feature Names
+# Must match TradeExecutionEnv / RegimeAwareTradeExecutionEnv observation layouts.
 STANDARD_FEATURE_NAMES = [
+    "log_return",
+    "volatility",
+    "volume_ratio",
+    "spread_bps",
+    "liquidity",
     "remaining_inventory",
     "time_remaining",
-    "price_change",
-    "volatility",
-    "bid_ask_spread",
-    "volume_ratio",
-    "vwap_ratio",
 ]
 
 REGIME_FEATURE_NAMES = STANDARD_FEATURE_NAMES + [
@@ -33,6 +34,15 @@ REGIME_FEATURE_NAMES = STANDARD_FEATURE_NAMES + [
     "prob_high_vol",
     "prob_stress",
 ]
+
+
+# Must match the environment's action_fractions [0.0, 0.10, 0.25, 0.50].
+ACTION_MEANINGS = {
+    0: "Wait (execute 0% of remaining inventory)",
+    1: "Execute 10% of remaining inventory",
+    2: "Execute 25% of remaining inventory",
+    3: "Execute 50% of remaining inventory",
+}
 
 
 class DecisionExplainer:
@@ -93,12 +103,7 @@ class DecisionExplainer:
                 feature_names = [f"feature_{i}" for i in range(dim)]
 
         if action_meanings is None:
-            action_meanings = {
-                0: "Passive (0% target rate)",
-                1: "Normal TWAP (25% target rate)",
-                2: "Accelerated (50% target rate)",
-                3: "Aggressive Liquidation (100% target rate)",
-            }
+            action_meanings = ACTION_MEANINGS
 
         # Step 1: Compute Q-values or action scores across all actions
         action_scores = self._evaluate_action_scores(agent, state)
