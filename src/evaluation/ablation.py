@@ -77,6 +77,8 @@ class ShuffledRegimeEnv(gym.Env):
         start_range=None,
         history_bars: int = 60,
         order_participation=None,
+        action_mode: str = "fraction",
+        drift_free_reward: bool = False,
     ):
         super().__init__()
 
@@ -103,6 +105,8 @@ class ShuffledRegimeEnv(gym.Env):
             start_range=start_range,
             history_bars=history_bars,
             order_participation=order_participation,
+            action_mode=action_mode,
+            drift_free_reward=drift_free_reward,
         )
 
     def _random_regime_features(self) -> np.ndarray:

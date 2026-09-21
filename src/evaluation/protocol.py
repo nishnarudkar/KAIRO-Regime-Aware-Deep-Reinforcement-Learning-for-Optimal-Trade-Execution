@@ -38,6 +38,14 @@ N_REGIMES = 4
 # Regime features chosen on tuning seeds (9001-9003, disjoint from the experiment seeds) by adjusted Rand
 # index against the true regime: 0.72 vs 0.57 for the original five features.
 HMM_FEATURES = ["log_realized_vol_15m", "log_parkinson_vol", "log_spread_bps", "log_volume_ratio_60m"]
+# Action space used by every experiment and served model. Actions are multiples of the TWAP slice
+# (remaining / steps left), so 1.0 reproduces TWAP exactly; the original "fraction of remaining inventory"
+# actions (0/10/25/50%) could not express TWAP, not even finishing on the last step.
+ACTION_MODE = "twap_multiple"
+ACTION_MULTIPLIERS = [0.0, 0.5, 1.0, 2.0, 4.0]
+# Training reward charges fills against the current un-impacted market price (drift-free control variate);
+# evaluation always reports the true arrival-price implementation shortfall.
+DRIFT_FREE_REWARD = True
 ORDER_PARTICIPATION = 0.055   # order = 5.5% of the window's expected volume (=100k shares at 60k/min, 30 bars)
 HISTORY_BARS = 60
 
@@ -153,6 +161,8 @@ def build_env(
     shuffle_seed: int = 1000,
     order_participation: Optional[float] = None,
     lambda_terminal: Optional[float] = None,
+    action_mode: str = ACTION_MODE,
+    drift_free_reward: bool = DRIFT_FREE_REWARD,
 ):
     """
     Build an environment of the requested kind over one or more datasets.
@@ -167,6 +177,9 @@ def build_env(
     common = dict(
         target_inventory=target_inventory, side=side, horizon_steps=horizon,
         random_start=random_start, start_range=start_range, order_participation=order_participation,
+        action_mode=action_mode, drift_free_reward=drift_free_reward,
+        action_fractions=list(ACTION_MULTIPLIERS if action_mode == "twap_multiple"
+                                                       else [0.0, 0.10, 0.25, 0.50]),
     )
     if lambda_terminal is not None:
         from src.environment.rewards import ModularExecutionReward, DEFAULT_REWARD_SCALE

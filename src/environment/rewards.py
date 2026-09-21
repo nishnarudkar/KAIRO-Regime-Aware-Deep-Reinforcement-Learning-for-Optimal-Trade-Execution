@@ -77,7 +77,8 @@ class ModularExecutionReward(BaseRewardCalculator):
         target_inventory: float,
         volatility: float,
         is_terminal: bool = False,
-        terminal_penalty: float = 0.0
+        terminal_penalty: float = 0.0,
+        benchmark_price: float = None,
     ) -> Dict[str, float]:
         """
         Calculate detailed step reward components.
@@ -105,8 +106,14 @@ class ModularExecutionReward(BaseRewardCalculator):
 
         norm_base = target_inventory * arrival_price
 
-        # 1. Execution Shortfall Cost Penalty (normalized by Q_0 * P_0)
-        shortfall_cost = step_result.filled_qty * (step_result.execution_price - arrival_price)
+        # 1. Execution Shortfall Cost Penalty (normalized by Q_0 * P_0).
+        #    By default the fill is charged against the arrival price (true implementation shortfall).
+        #    With ``benchmark_price`` (the un-impacted market price at this step) the uncontrollable price
+        #    drift since arrival is removed: what remains is spread + temporary impact + the permanent impact
+        #    of earlier trades, a far less noisy learning signal (a control variate; evaluation still uses the
+        #    true arrival-price shortfall).
+        reference = arrival_price if benchmark_price is None else benchmark_price
+        shortfall_cost = step_result.filled_qty * (step_result.execution_price - reference)
         cost_penalty = self.lambda_cost * (shortfall_cost / norm_base)
 
         # 2. Temporary Market Impact Penalty

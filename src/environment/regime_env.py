@@ -91,6 +91,8 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         history_bars: int = 60,
         warmup_bars: int = 30,
         order_participation: Optional[float] = None,
+        action_mode: str = "fraction",
+        drift_free_reward: bool = False,
     ):
         super().__init__()
 
@@ -135,6 +137,8 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
             start_range=start_range,
             history_bars=history_bars,
             order_participation=order_participation,
+            action_mode=action_mode,
+            drift_free_reward=drift_free_reward,
         )
 
         # Causal inference engine — initialised lazily after HMM check

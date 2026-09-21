@@ -30,16 +30,30 @@ $$S_t = \begin{bmatrix} r_t \\ \sigma_t \\ V_t^{\text{rel}} \\ S_t^{\text{rel}} 
 
 ## 2. Action Space ($\mathcal{A}$)
 
-The action space is discrete with 4 choices representing fractions of the **remaining inventory** $q_t$:
+Two action modes exist (`action_mode` of the environment).
 
-$$\mathcal{A} = \{0, 1, 2, 3\}$$
+### `twap_multiple` — used by all experiments and served models
 
-| Action Index | Fraction ($\alpha_a$) | Executed Quantity Request ($u_t$) | Description |
+Five discrete choices, each a **multiple of the TWAP slice** $\bar u_t = q_t / (T - t)$ (remaining inventory divided by
+steps left):
+
+| Action | Multiple $m_a$ | Requested quantity $u_t$ | Meaning |
 |---|---|---|---|
-| `0` | $0.00$ | $0$ shares | Hold / Do not execute in this bar |
-| `1` | $0.10$ | $0.10 \times q_t$ | Execute 10% of remaining inventory |
-| `2` | $0.25$ | $0.25 \times q_t$ | Execute 25% of remaining inventory |
-| `3` | $0.50$ | $0.50 \times q_t$ | Execute 50% of remaining inventory |
+| `0` | 0 | $0$ | Pause |
+| `1` | 0.5 | $0.5\,\bar u_t$ | Slow |
+| `2` | 1 | $\bar u_t$ | On schedule (**exactly TWAP**) |
+| `3` | 2 | $2\,\bar u_t$ | Accelerate |
+| `4` | 4 | $4\,\bar u_t$ | Rush |
+
+Always playing action `2` reproduces TWAP, so the agent can at least match the baseline and learns *deviations* from
+it. At the last step the 1× slice is the whole remainder, so the order can always be finished (subject to the
+participation cap).
+
+### `fraction` — original design
+
+Fractions $\{0, 0.10, 0.25, 0.50\}$ of the remaining inventory. This action set cannot express TWAP (early slices are
+too large, the last step cannot finish the order), which handicapped the agents; on tuning data every configuration
+was about 1.7 bps costlier than TWAP.
 
 Actual filled quantity $\tilde{u}_t$ is constrained by the remaining inventory and maximum bar volume participation cap $\rho_{\max} \cdot V_t$:
 
@@ -109,3 +123,19 @@ Truncation (`truncated = True`) occurs if market data runs out before step $T$.
 - **Markovian Assumption**: The state vector $S_t$ encapsulates localized market liquidity, volatility, and order progress metrics. While financial prices exhibit long-memory dynamics, including rolling return, volatility, relative volume, spread, and inventory metrics satisfies the approximate Markov property $P(S_{t+1} \mid S_t, A_t) \approx P(S_{t+1} \mid S_t, \dots, S_0, A_t \dots A_0)$.
 - **No Future Data Leakage**: $S_t$ contains information generated strictly up to step $t$.
 - **Causality**: Execution actions at step $t$ affect step $t$ execution price and future market prices $t+1, \dots, T$ via permanent market impact.
+
+
+---
+
+## 5. Training reward variant (drift-free)
+
+`drift_free_reward=True` (used for training) charges each fill against the *current un-impacted market price*
+instead of the arrival price $P_0$: $c_t^{\text{shortfall}} = \tilde u_t (P_t^{\text{exec}} - P_t^{\text{mkt}}) / (Q_0 P_0)$.
+This removes the uncontrollable price drift since arrival and keeps spread, temporary impact and the permanent
+impact of earlier trades. It reduces the standard deviation of episode returns about 27-fold at an unchanged mean.
+Evaluation always reports the true arrival-price implementation shortfall.
+
+## 6. Order size
+
+Experiments size each order as 5.5% of the window's expected volume (trailing 60-bar mean volume × horizon), so orders
+are comparable across liquidity regimes and always fillable under the participation cap.

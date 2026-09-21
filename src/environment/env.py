@@ -65,8 +65,19 @@ class TradeExecutionEnv(gym.Env):
         start_range: Optional[Tuple[int, int]] = None,
         history_bars: int = 60,
         order_participation: Optional[float] = None,
+        action_mode: str = "fraction",
+        drift_free_reward: bool = False,
     ):
         super().__init__()
+
+        self.drift_free_reward = drift_free_reward
+
+        # "fraction":      action k executes action_fractions[k] of the REMAINING inventory
+        # "twap_multiple": action k executes action_fractions[k] x the TWAP slice, i.e.
+        #                  remaining / steps_left, so 1.0 reproduces TWAP and the agent learns deviations
+        if action_mode not in ("fraction", "twap_multiple"):
+            raise ValueError("action_mode must be 'fraction' or 'twap_multiple'")
+        self.action_mode = action_mode
 
         # If set, each episode's order is sized as this fraction of the *expected* volume of the
         # window (trailing mean volume x horizon), so orders are comparable across liquidity levels
@@ -221,7 +232,11 @@ class TradeExecutionEnv(gym.Env):
 
         fraction = self.action_fractions[int(action)]
         rem_inventory = self.simulator.remaining_inventory
-        order_qty = fraction * rem_inventory
+        if self.action_mode == "twap_multiple":
+            steps_left = max(1, self.simulator.horizon_steps - self.simulator.current_step)
+            order_qty = fraction * rem_inventory / steps_left
+        else:
+            order_qty = fraction * rem_inventory
 
         # Execute step in simulator
         step_result = self.simulator.step(order_qty=order_qty)
@@ -243,7 +258,9 @@ class TradeExecutionEnv(gym.Env):
             target_inventory=self.simulator.target_inventory,
             volatility=sim_state["volatility"],
             is_terminal=terminated,
-            terminal_penalty=terminal_penalty
+            terminal_penalty=terminal_penalty,
+            benchmark_price=(float(self.simulator.market_data["price"].iloc[step_result.step])
+                             if self.drift_free_reward else None),
         )
         reward = reward_dict["reward"]
 

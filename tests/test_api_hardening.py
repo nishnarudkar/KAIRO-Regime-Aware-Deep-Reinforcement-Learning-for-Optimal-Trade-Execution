@@ -211,7 +211,7 @@ def test_simulate_with_served_model_records_trajectories_and_explains(tiny_model
     body = e.json()
     assert len(body["feature_attributions"]) == 12
     assert "log_return" in body["feature_attributions"]          # real env feature names
-    assert body["action_label"].startswith(("Wait", "Execute"))  # real action meanings
+    assert body["action_label"].startswith(("Pause", "Slow", "On schedule", "Accelerate", "Rush"))  # real action meanings
     assert body["regime_influence_score"] >= 0
 
 

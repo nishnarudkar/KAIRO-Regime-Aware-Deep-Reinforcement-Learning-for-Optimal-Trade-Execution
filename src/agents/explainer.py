@@ -36,13 +36,22 @@ REGIME_FEATURE_NAMES = STANDARD_FEATURE_NAMES + [
 ]
 
 
-# Must match the environment's action_fractions [0.0, 0.10, 0.25, 0.50].
-ACTION_MEANINGS = {
+# Action meanings must match the environment. "fraction" mode: [0, 10, 25, 50]% of remaining inventory;
+# "twap_multiple" mode (the default in experiments and served models): multiples of the TWAP slice.
+ACTION_MEANINGS_FRACTION = {
     0: "Wait (execute 0% of remaining inventory)",
     1: "Execute 10% of remaining inventory",
     2: "Execute 25% of remaining inventory",
     3: "Execute 50% of remaining inventory",
 }
+ACTION_MEANINGS_TWAP = {
+    0: "Pause (0x the TWAP slice)",
+    1: "Slow (0.5x the TWAP slice)",
+    2: "On schedule (1x the TWAP slice)",
+    3: "Accelerate (2x the TWAP slice)",
+    4: "Rush (4x the TWAP slice)",
+}
+ACTION_MEANINGS = ACTION_MEANINGS_FRACTION   # backwards-compatible name
 
 
 class DecisionExplainer:
@@ -102,12 +111,11 @@ class DecisionExplainer:
             else:
                 feature_names = [f"feature_{i}" for i in range(dim)]
 
-        if action_meanings is None:
-            action_meanings = ACTION_MEANINGS
-
         # Step 1: Compute Q-values or action scores across all actions
         action_scores = self._evaluate_action_scores(agent, state)
         nb_actions = len(action_scores)
+        if action_meanings is None:
+            action_meanings = ACTION_MEANINGS_TWAP if nb_actions == 5 else ACTION_MEANINGS_FRACTION
         chosen_score = float(action_scores[action]) if action < nb_actions else 0.0
 
         # Step 2: Compute feature sensitivities via finite difference on chosen action score
