@@ -190,6 +190,11 @@ def run_ppo_experiment(
     from src.environment import TradeExecutionEnv, RegimeAwareTradeExecutionEnv
 
     os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+    from src.utils.dagshub_utils import setup_dagshub_mlflow
+    dagshub_uri = setup_dagshub_mlflow()
+    if dagshub_uri and mlflow_tracking_uri == "mlruns":
+        mlflow_tracking_uri = dagshub_uri
+
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     mlflow.set_experiment(EXPERIMENT_NAME)
 

@@ -119,6 +119,11 @@ class DQNTrainer:
         # Seed global RNGs for full determinism
         np.random.seed(cfg.seed)
 
+        from src.utils.dagshub_utils import setup_dagshub_mlflow
+        dagshub_uri = setup_dagshub_mlflow()
+        if dagshub_uri and self.mlflow_tracking_uri == "mlruns":
+            self.mlflow_tracking_uri = dagshub_uri
+
         mlflow.set_tracking_uri(self.mlflow_tracking_uri)
         mlflow.set_experiment(cfg.experiment_name)
 
