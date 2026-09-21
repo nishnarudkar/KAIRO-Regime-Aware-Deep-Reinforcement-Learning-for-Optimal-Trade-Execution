@@ -83,6 +83,8 @@ def main():
     ap.add_argument("--out", default="results/tuning")
     ap.add_argument("--steps-study", action="store_true", help="vary training steps for the current best configs")
     ap.add_argument("--best", default=None, help="path to best_configs.json (for --steps-study)")
+    ap.add_argument("--only", nargs="+", default=None, help="restrict the search to these config names")
+    ap.add_argument("--tag", default=None, help="output file tag (default tuning_results)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -92,7 +94,8 @@ def main():
         steps_list = [50_000, 150_000, 450_000]
         tag = "steps_study"
     else:
-        cfgs, steps_list, tag = search_space(), [args.timesteps], "tuning_results"
+        cfgs = [c for c in search_space() if not args.only or c["name"] in args.only]
+        steps_list, tag = [args.timesteps], (args.tag or "tuning_results")
 
     jobs = [dict(cfg=c, scenario=s, seed=sd, steps=st, horizon=args.horizon)
             for c in cfgs for st in steps_list for s in TUNE_SCENARIOS for sd in TUNE_SEEDS]
@@ -116,7 +119,7 @@ def main():
             .sort_values(["algo", "diff_vs_twap"]))
     summ.to_csv(os.path.join(args.out, f"{tag}_summary.csv"), index=False)
     print(summ.to_string(index=False))
-    if not args.steps_study:
+    if not args.steps_study and not args.only:
         best = {a: g.sort_values("diff_vs_twap").iloc[0]["config"] for a, g in summ.groupby("algo")}
         json.dump(best, open(os.path.join(args.out, "best_configs.json"), "w"), indent=2)
         print("best:", best)

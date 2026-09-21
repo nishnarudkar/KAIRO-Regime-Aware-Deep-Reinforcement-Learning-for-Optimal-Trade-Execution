@@ -1,0 +1,4 @@
+{
+  "dqn": "dqn lr=0.0003 net=128",
+  "ppo": "ppo lr=0.0001 ent=0 net=128"
+}

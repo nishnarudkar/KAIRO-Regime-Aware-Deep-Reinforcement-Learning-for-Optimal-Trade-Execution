@@ -12,19 +12,17 @@
     123,
     777,
     2024,
-    31415,
-    7,
-    99,
-    1234
+    31415
   ],
-  "train_timesteps": 100000,
+  "train_timesteps": 150000,
   "n_bars": 3000,
   "horizon_steps": 30,
+  "order_participation": 0.055,
   "target_inventory": 100000.0,
   "side": "BUY",
   "train_ratio": 0.7,
   "run_ablation": true,
   "include_ppo": true,
   "max_windows": null,
-  "n_jobs": 16
+  "n_jobs": 28
 }
