@@ -1,0 +1,15 @@
+.git
+.gitignore
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+mlruns
+frontend/.next
+frontend/node_modules
+*.log

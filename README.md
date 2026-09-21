@@ -15,7 +15,7 @@ A research-grade framework and production platform for executing large instituti
 
 ## 📊 Project Status & Progress Tracker
 
-**120 / 120 Unit Tests Passing ✅ | Stages 0–13 Complete**
+**120 / 120 Unit Tests Passing ✅ | Stages 0–14 Complete**
 
 | Stage | Name | Status | Description / Key Deliverables |
 |---|---|---|---|
@@ -33,8 +33,8 @@ A research-grade framework and production platform for executing large instituti
 | **Stage 11**| Next.js Product UI | ✅ Complete | Adaptive Execution Intelligence frontend dashboard (5 interactive tabs, Recharts analytics) |
 | **Stage 12**| Decision Explanation Layer| ✅ Complete | Post-hoc feature contribution (`DecisionExplainer`), regime influence scoring, `docs/explanations.md` |
 | **Stage 13**| Alpaca Paper Trading | ✅ Complete | `ExecutionRiskGate` (4 safety gates, kill switch), `AlpacaPaperExecutor`, `/paper` API endpoint |
-| **Stage 14**| Docker Packaging | 🔜 Next | Containerization (Docker Compose for backend, frontend, MLflow) |
-| **Stage 15**| Research & Audit | 🔜 Planned | Formal research & reproducibility audit (`docs/research_audit.md`) |
+| **Stage 14**| Docker Packaging | ✅ Complete | Multi-container stack (`docker-compose.yml` for FastAPI, Next.js UI, MLflow), `docs/docker_deployment.md` |
+| **Stage 15**| Research & Audit | 🔜 Next | Formal research & reproducibility audit (`docs/research_audit.md`) |
 
 ---
 

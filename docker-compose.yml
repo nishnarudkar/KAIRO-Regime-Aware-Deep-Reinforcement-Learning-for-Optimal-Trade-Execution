@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # ── 1. FastAPI Backend Service ──────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kairo_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ALPACA_API_KEY=${ALPACA_API_KEY:-""}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY:-""}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ── 2. Next.js Frontend Dashboard ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kairo_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── 3. MLflow Experiment Tracking Server ──────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.0
+    container_name: kairo_mlflow
+    ports:
+      - "5000:5000"
+    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./artifacts --host 0.0.0.0 --port 5000
+    volumes:
+      - mlflow_data:/artifacts
+    restart: unless-stopped
+
+volumes:
+  mlflow_data:
