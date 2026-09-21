@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { BarChart3, TrendingDown, DollarSign, PieChart, ShieldCheck, Activity } from 'lucide-react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -16,12 +15,29 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { ExecutionRecord, ExecutionTrajectory, getExecutionTrajectory } from '../lib/api';
+import {
+  Panel,
+  PanelHeader,
+  PageTitle,
+  EmptyState,
+  StatStrip,
+  ChartTooltip,
+  regimeColor,
+  fmtUsd,
+  fmtInt,
+  AXIS_TICK,
+  AXIS_LINE,
+  GRID_STROKE,
+} from './ui';
 
 interface ExecutionAnalyticsTabProps {
   executionRecord: ExecutionRecord | null;
+  onNavigateToNew: () => void;
 }
 
-export function ExecutionAnalyticsTab({ executionRecord }: ExecutionAnalyticsTabProps) {
+const REGIME_NAMES = ['Low Volatility', 'Normal', 'High Volatility', 'Stress'];
+
+export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: ExecutionAnalyticsTabProps) {
   const [trajectory, setTrajectory] = useState<ExecutionTrajectory | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -37,144 +53,152 @@ export function ExecutionAnalyticsTab({ executionRecord }: ExecutionAnalyticsTab
 
   if (!executionRecord) {
     return (
-      <div className="max-w-4xl mx-auto bg-slate-900/60 border border-slate-800 rounded-2xl p-12 text-center">
-        <BarChart3 className="h-12 w-12 text-slate-600 mx-auto mb-4" />
-        <h3 className="text-lg font-bold text-white mb-2">No Analytics Data Available</h3>
-        <p className="text-sm text-slate-400">Run a simulation to generate detailed implementation shortfall and trajectory charts.</p>
+      <div>
+        <PageTitle eyebrow="Execution" title="Analytics" />
+        <EmptyState
+          title="No analytics yet"
+          body="Run a simulation to see the inventory, price and action trajectories with a cost breakdown."
+          action={
+            <button onClick={onNavigateToNew} className="btn btn-ghost">
+              Open order ticket
+            </button>
+          }
+        />
       </div>
     );
   }
 
   const { metrics } = executionRecord;
 
-  // Format Recharts data
   const trajectoryData = (trajectory?.inventory_trajectory || []).map((inv, idx) => ({
     step: idx,
     inventory: inv,
     price: trajectory?.price_trajectory[idx] || metrics.arrival_price,
-    action: trajectory?.action_trajectory[idx] || 0,
   }));
 
+  const regimes = trajectory?.regime_trajectory ?? [];
+
   const actionDistributionData = [
-    { name: '0% Fill', count: metrics.action_counts['0'] || 0, fill: '#64748b' },
-    { name: '10% Fill', count: metrics.action_counts['1'] || 0, fill: '#3b82f6' },
-    { name: '25% Fill', count: metrics.action_counts['2'] || 0, fill: '#6366f1' },
-    { name: '50% Fill', count: metrics.action_counts['3'] || 0, fill: '#10b981' },
+    { name: '0%', count: metrics.action_counts['0'] || 0 },
+    { name: '10%', count: metrics.action_counts['1'] || 0 },
+    { name: '25%', count: metrics.action_counts['2'] || 0 },
+    { name: '50%', count: metrics.action_counts['3'] || 0 },
   ];
 
+  const chartMargin = { top: 8, right: 8, bottom: 0, left: 0 };
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header Summary */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-xl font-bold text-white">Execution Analytics & Cost Breakdown</h2>
-            <p className="text-xs text-slate-400">
-              Policy: <span className="text-indigo-400 font-semibold">{executionRecord.policy}</span> • Symbol: <span className="text-white">{executionRecord.symbol}</span> • Scenario: <span className="text-slate-300">{executionRecord.scenario}</span>
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-slate-400">Implementation Shortfall</p>
-            <p className="text-2xl font-black text-indigo-400">{metrics.implementation_shortfall_bps.toFixed(2)} bps</p>
-          </div>
-        </div>
+    <div className="space-y-6">
+      <PageTitle eyebrow={`${executionRecord.symbol} · ${executionRecord.policy}`} title="Analytics" />
 
-        {/* Detailed Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">Fill Rate</span>
-            <span className="text-base font-bold text-emerald-400">{(metrics.completion_rate * 100).toFixed(1)}%</span>
-          </div>
+      <StatStrip
+        items={[
+          {
+            label: 'Implementation shortfall',
+            value: `${metrics.implementation_shortfall_bps.toFixed(2)} bps`,
+            sub: fmtUsd(metrics.implementation_shortfall),
+          },
+          {
+            label: 'Fill rate',
+            value: `${(metrics.completion_rate * 100).toFixed(1)}%`,
+            sub: `${fmtInt(executionRecord.executed_inventory)} shares`,
+            tone: metrics.completion_rate >= 0.9999 ? 'pos' : 'warn',
+          },
+          {
+            label: 'Market impact',
+            value: fmtUsd(metrics.market_impact_cost),
+            sub: `Fees ${fmtUsd(metrics.total_transaction_fees)}`,
+          },
+          {
+            label: 'Slippage vs VWAP',
+            value: `${metrics.vwap_slippage_bps.toFixed(2)} bps`,
+            sub: `Avg. fill ${fmtUsd(metrics.average_execution_price)}`,
+          },
+        ]}
+      />
 
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">Executed Shares</span>
-            <span className="text-base font-bold text-white">{executionRecord.executed_inventory.toLocaleString()}</span>
-          </div>
+      {loading && <p className="text-[13px] text-ink-3">Loading trajectory…</p>}
+      {!loading && !trajectory && (
+        <p className="text-[13px] text-ink-3 border-l-2 border-line-strong pl-3">
+          Trajectory data is unavailable for this execution, so the time-series charts are empty.
+        </p>
+      )}
 
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">Avg Fill Price</span>
-            <span className="text-base font-bold text-white">${metrics.average_execution_price.toFixed(2)}</span>
-          </div>
-
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">Market Impact</span>
-            <span className="text-base font-bold text-amber-400">${metrics.market_impact_cost.toFixed(2)}</span>
-          </div>
-
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">Transaction Fees</span>
-            <span className="text-base font-bold text-white">${metrics.total_transaction_fees.toFixed(2)}</span>
-          </div>
-
-          <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl">
-            <span className="text-[11px] text-slate-400 block">VWAP Slippage</span>
-            <span className="text-base font-bold text-blue-400">{metrics.vwap_slippage_bps.toFixed(2)} bps</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Trajectory Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Inventory Decay Chart */}
-        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl">
-          <h3 className="text-sm font-bold text-white mb-1">Remaining Inventory Decay Trajectory</h3>
-          <p className="text-xs text-slate-400 mb-4">Remaining shares ($I_t$) over time steps</p>
-
-          <div className="h-64 w-full">
+        <Panel>
+          <PanelHeader title="Remaining inventory" note="Shares still to execute at each step" />
+          <div className="h-64 p-4 pl-1">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trajectoryData}>
-                <defs>
-                  <linearGradient id="invGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="step" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} />
-                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                <Area type="monotone" dataKey="inventory" stroke="#6366f1" fillOpacity={1} fill="url(#invGrad)" />
+              <AreaChart data={trajectoryData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+                <XAxis dataKey="step" minTickGap={24} tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
+                <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtInt(v)} />
+                <Tooltip
+                  cursor={{ stroke: '#414850' }}
+                  content={<ChartTooltip labelPrefix="Step " format={(v) => `${fmtInt(v)} shares`} />}
+                />
+                <Area type="stepAfter" dataKey="inventory" stroke="#d8b46a" strokeWidth={1.5} fill="#d8b46a" fillOpacity={0.08} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Panel>
 
-        {/* Price Trajectory Chart */}
-        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl">
-          <h3 className="text-sm font-bold text-white mb-1">Market Price Trajectory</h3>
-          <p className="text-xs text-slate-400 mb-4">Asset price movements over the execution horizon</p>
-
-          <div className="h-64 w-full">
+        <Panel>
+          <PanelHeader title="Market price" note="Asset price across the execution horizon" />
+          <div className="h-64 p-4 pl-1">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trajectoryData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="step" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis domain={['auto', 'auto']} stroke="#64748b" tick={{ fontSize: 11 }} />
-                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                <Line type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} dot={false} />
+              <LineChart data={trajectoryData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+                <XAxis dataKey="step" minTickGap={24} tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
+                <YAxis domain={['auto', 'auto']} tick={AXIS_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => v.toFixed(2)} />
+                <Tooltip
+                  cursor={{ stroke: '#414850' }}
+                  content={<ChartTooltip labelPrefix="Step " format={(v) => fmtUsd(v)} />}
+                />
+                <Line type="monotone" dataKey="price" stroke="#e4e6e8" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </div>
+          {regimes.length > 0 && (
+            <div className="px-5 pb-4 -mt-1">
+              <p className="label mb-1.5">Regime by step</p>
+              <div className="flex h-2.5 gap-px" aria-hidden>
+                {regimes.map((r, i) => (
+                  <span
+                    key={i}
+                    className="flex-1"
+                    title={`Step ${i}: ${REGIME_NAMES[r] ?? `Regime ${r}`}`}
+                    style={{ background: regimeColor(REGIME_NAMES[r] ?? '') }}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[12px] text-ink-3">
+                {REGIME_NAMES.map((n) => (
+                  <span key={n} className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 inline-block" style={{ background: regimeColor(n) }} />
+                    {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
       </div>
 
-      {/* Action Distribution Chart */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl">
-        <h3 className="text-sm font-bold text-white mb-1">RL Action Choice Distribution</h3>
-        <p className="text-xs text-slate-400 mb-4">Frequency of inventory fill percentage actions selected by policy</p>
-
-        <div className="h-56 w-full">
+      <Panel>
+        <PanelHeader title="Action distribution" note="How often the policy chose each fraction of remaining inventory" />
+        <div className="h-56 p-4 pl-1">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={actionDistributionData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-              <Bar dataKey="count" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+            <BarChart data={actionDistributionData} margin={chartMargin}>
+              <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+              <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
+              <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
+              <Tooltip cursor={{ fill: '#16181a' }} content={<ChartTooltip labelPrefix="Fill " format={(v) => `${v} steps`} />} />
+              <Bar dataKey="count" fill="#7d9bb8" radius={[1, 1, 0, 0]} maxBarSize={56} />
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }

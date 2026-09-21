@@ -1,9 +1,21 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Layers, Play, Trophy, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { runBacktest, BacktestResponse } from '../lib/api';
+import { runBacktest, BacktestResponse, BacktestResultItem } from '../lib/api';
+import { Panel, PanelHeader, PageTitle, fmtUsd, fmtInt } from './ui';
+
+const SCENARIOS = [
+  ['normal', 'Normal market'],
+  ['high_volatility', 'High volatility'],
+  ['low_liquidity', 'Low liquidity'],
+  ['stress', 'Market stress'],
+  ['regime_transition', 'Regime transition'],
+  ['liquidity_shock', 'Liquidity shock'],
+];
+
+const BASELINES = ['TWAP', 'VWAP', 'POV'];
+const isBaseline = (p: string) => BASELINES.includes(p);
+const isRegimeAware = (p: string) => p.includes('Regime');
 
 export function StrategyComparisonTab() {
   const [scenario, setScenario] = useState('normal');
@@ -29,180 +41,176 @@ export function StrategyComparisonTab() {
         seed: Number(seed),
       });
       setBacktestData(data);
-    } catch (err: any) {
-      setError(err.message || 'Backtest comparison failed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Backtest comparison failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const chartData = (backtestData?.results || []).map((r) => ({
-    policy: r.policy,
-    is_bps: r.implementation_shortfall_bps,
-    fill: r.policy.includes('Regime') ? '#10b981' : r.policy.includes('DQN') || r.policy.includes('PPO') ? '#6366f1' : '#64748b',
-  }));
-
-  const bestStrategy = backtestData?.results.reduce((prev, current) =>
-    prev.implementation_shortfall_bps < current.implementation_shortfall_bps ? prev : current
-  , backtestData.results[0]);
+  const ranked: BacktestResultItem[] = backtestData
+    ? [...backtestData.results].sort((a, b) => a.implementation_shortfall_bps - b.implementation_shortfall_bps)
+    : [];
+  const best = ranked[0];
+  const bestBaseline = ranked.find((r) => isBaseline(r.policy));
+  const bestRl = ranked.find((r) => !isBaseline(r.policy));
+  // Bars diverge from a zero line so the sign of the shortfall stays visible.
+  const lo = Math.min(0, ...ranked.map((r) => r.implementation_shortfall_bps));
+  const hi = Math.max(0, ...ranked.map((r) => r.implementation_shortfall_bps));
+  const span = Math.max(1e-9, hi - lo);
+  const zeroPct = (-lo / span) * 100;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Control Card */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-              <Layers className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Multi-Strategy Benchmark Comparison</h2>
-              <p className="text-xs text-slate-400">Run head-to-head backtest across baselines and DRL agents under identical market conditions</p>
-            </div>
-          </div>
+    <div className="space-y-6">
+      <PageTitle eyebrow="Backtest" title="Strategy comparison" />
 
-          <button
-            onClick={handleRunBacktest}
-            disabled={loading}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:opacity-95 text-white font-semibold text-xs shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
-          >
+      <Panel>
+        <PanelHeader
+          title="Benchmark setup"
+          note="Runs all seven policies against the same simulated market path so results are directly comparable."
+        />
+        <div className="p-5 grid grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr_auto] gap-x-5 gap-y-4 items-end">
+          <div className="col-span-2 lg:col-span-1">
+            <label htmlFor="cmp-scenario" className="label block mb-1.5">Scenario</label>
+            <select id="cmp-scenario" value={scenario} onChange={(e) => setScenario(e.target.value)} className="field">
+              {SCENARIOS.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="cmp-qty" className="label block mb-1.5">Quantity</label>
+            <input id="cmp-qty" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="field num" min="1000" step="1000" />
+          </div>
+          <div>
+            <label htmlFor="cmp-horizon" className="label block mb-1.5">Horizon (min)</label>
+            <input id="cmp-horizon" type="number" value={horizonSteps} onChange={(e) => setHorizonSteps(Number(e.target.value))} className="field num" min="5" max="120" />
+          </div>
+          <div>
+            <label htmlFor="cmp-seed" className="label block mb-1.5">Seed</label>
+            <input id="cmp-seed" type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} className="field num" />
+          </div>
+          <button onClick={handleRunBacktest} disabled={loading} className="btn btn-primary col-span-2 lg:col-span-1">
             {loading ? (
               <>
-                <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Running Backtest Suite...</span>
+                <span className="spinner" />
+                Running…
               </>
             ) : (
-              <>
-                <Play className="h-3.5 w-3.5 fill-white" />
-                <span>Run Backtest Benchmark</span>
-              </>
+              'Run benchmark'
             )}
           </button>
         </div>
-
-        {/* Backtest Config Inputs */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">Market Scenario</label>
-            <select
-              value={scenario}
-              onChange={(e) => setScenario(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-            >
-              <option value="normal">Normal Market</option>
-              <option value="high_volatility">High Volatility</option>
-              <option value="low_liquidity">Low Liquidity</option>
-              <option value="stress">Market Stress</option>
-              <option value="regime_transition">Regime Transition</option>
-              <option value="liquidity_shock">Liquidity Shock</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">Target Inventory</label>
-            <input
-              type="number"
-              value={quantity}
-              onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">Random Seed</label>
-            <input
-              type="number"
-              value={seed}
-              onChange={(e) => setSeed(Number(e.target.value))}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-            />
-          </div>
-        </div>
-      </div>
+      </Panel>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm">
+        <p role="alert" className="text-[13px] text-neg border-l-2 border-neg pl-3">
           {error}
-        </div>
+        </p>
       )}
 
-      {/* Results View */}
-      {backtestData && (
-        <div className="space-y-6">
-          {/* Winner Highlight Box */}
-          {bestStrategy && (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400">
-                  <Trophy className="h-6 w-6" />
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-emerald-400">Top Performing Strategy</div>
-                  <h3 className="text-lg font-bold text-white">{bestStrategy.policy}</h3>
-                  <p className="text-xs text-slate-300">Achieved lowest Implementation Shortfall of {bestStrategy.implementation_shortfall_bps.toFixed(2)} bps</p>
-                </div>
+      {!backtestData && !loading && !error && (
+        <p className="text-[13px] text-ink-3">No results yet. Configure the run above and start the benchmark.</p>
+      )}
+
+      {backtestData && best && (
+        <>
+          <Panel>
+            <div className="px-5 py-5 grid grid-cols-1 sm:grid-cols-3 gap-y-4 sm:divide-x divide-line">
+              <div className="sm:pr-5">
+                <p className="label">Lowest shortfall</p>
+                <p className="text-[18px] font-semibold text-ink mt-1.5">{best.policy}</p>
+                <p className="num text-[13px] text-ink-2 mt-0.5">
+                  {best.implementation_shortfall_bps.toFixed(2)} bps · {fmtUsd(best.execution_cost)}
+                </p>
               </div>
-              <div className="text-right">
-                <span className="text-xs text-slate-400 block">Execution Cost</span>
-                <span className="text-lg font-bold text-emerald-400">${bestStrategy.execution_cost.toLocaleString()}</span>
+              <div className="sm:px-5">
+                <p className="label">Best baseline</p>
+                <p className="text-[18px] font-semibold text-ink mt-1.5">{bestBaseline?.policy ?? '—'}</p>
+                <p className="num text-[13px] text-ink-2 mt-0.5">
+                  {bestBaseline ? `${bestBaseline.implementation_shortfall_bps.toFixed(2)} bps` : ''}
+                </p>
+              </div>
+              <div className="sm:pl-5">
+                <p className="label">Best RL agent vs best baseline</p>
+                {bestRl && bestBaseline ? (
+                  (() => {
+                    const delta = bestRl.implementation_shortfall_bps - bestBaseline.implementation_shortfall_bps;
+                    return (
+                      <>
+                        <p className={`num text-[18px] font-medium mt-1.5 ${delta <= 0 ? 'text-pos' : 'text-neg'}`}>
+                          {delta > 0 ? '+' : ''}
+                          {delta.toFixed(2)} bps
+                        </p>
+                        <p className="text-[13px] text-ink-2 mt-0.5">
+                          {bestRl.policy} · {delta <= 0 ? 'lower' : 'higher'} cost
+                        </p>
+                      </>
+                    );
+                  })()
+                ) : (
+                  <p className="text-ink-3 mt-1.5">—</p>
+                )}
               </div>
             </div>
-          )}
+          </Panel>
 
-          {/* Comparison Bar Chart */}
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <h3 className="text-sm font-bold text-white mb-1">Implementation Shortfall Comparison (IS bps)</h3>
-            <p className="text-xs text-slate-400 mb-4">Lower implementation shortfall represents superior execution quality</p>
-
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="policy" stroke="#64748b" tick={{ fontSize: 10 }} />
-                  <YAxis stroke="#64748b" tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                  <Bar dataKey="is_bps" fill="#6366f1" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Benchmark Results Table */}
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white">Backtest Benchmark Results Table</h3>
-            </div>
+          <Panel>
+            <PanelHeader
+              title="Results"
+              note={`Ranked by implementation shortfall, lowest first · ${backtestData.symbol} ${backtestData.side.toLowerCase()} ${fmtInt(backtestData.quantity)} · ${backtestData.scenario.replace(/_/g, ' ')}`}
+              right={
+                <span className="flex items-center gap-4 text-[12px] text-ink-3">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-ink-3 inline-block" />Baseline</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-info inline-block" />RL</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-accent inline-block" />Regime-aware</span>
+                </span>
+              }
+            />
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="p-3.5 font-semibold">Policy Name</th>
-                    <th className="p-3.5 font-semibold text-right">IS (bps)</th>
-                    <th className="p-3.5 font-semibold text-right">Execution Cost ($)</th>
-                    <th className="p-3.5 font-semibold text-right">Completion Rate</th>
-                    <th className="p-3.5 font-semibold text-right">VWAP Slippage (bps)</th>
+              <table className="w-full text-[13px] min-w-[720px]">
+                <thead>
+                  <tr className="label text-left border-b border-line">
+                    <th className="px-5 py-2.5 font-medium w-10">#</th>
+                    <th className="py-2.5 font-medium">Policy</th>
+                    <th className="py-2.5 font-medium w-[34%]">Shortfall (bps)</th>
+                    <th className="py-2.5 font-medium text-right">Cost</th>
+                    <th className="py-2.5 font-medium text-right">Fill</th>
+                    <th className="px-5 py-2.5 font-medium text-right">vs VWAP (bps)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {backtestData.results.map((r, i) => (
-                    <tr key={i} className="hover:bg-slate-800/30 transition-all">
-                      <td className="p-3.5 font-semibold text-white flex items-center gap-2">
-                        <span>{r.policy}</span>
-                        {r.policy.includes('Regime') && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-normal">Regime-Aware</span>
-                        )}
-                      </td>
-                      <td className="p-3.5 text-right font-mono font-bold text-indigo-400">{r.implementation_shortfall_bps.toFixed(2)}</td>
-                      <td className="p-3.5 text-right font-mono">${r.execution_cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-3.5 text-right font-mono text-emerald-400">{(r.completion_rate * 100).toFixed(1)}%</td>
-                      <td className="p-3.5 text-right font-mono text-blue-400">{r.vwap_slippage_bps.toFixed(2)}</td>
-                    </tr>
-                  ))}
+                <tbody>
+                  {ranked.map((r, i) => {
+                    const barColor = isRegimeAware(r.policy) ? 'var(--accent)' : isBaseline(r.policy) ? 'var(--ink-3)' : 'var(--info)';
+                    const valPct = ((r.implementation_shortfall_bps - lo) / span) * 100;
+                    const left = Math.min(zeroPct, valPct);
+                    const w = Math.abs(valPct - zeroPct);
+                    return (
+                      <tr key={r.policy} className="border-b border-line last:border-b-0 hover:bg-raised/50">
+                        <td className="px-5 py-3 num text-ink-3">{i + 1}</td>
+                        <td className="py-3 text-ink">{r.policy}</td>
+                        <td className="py-3 pr-6">
+                          <div className="flex items-center gap-3">
+                            <span className="num w-14 text-right text-ink">{r.implementation_shortfall_bps.toFixed(2)}</span>
+                            <span className="flex-1 h-2 bg-raised relative">
+                              <span className="absolute inset-y-0 w-px bg-line-strong" style={{ left: `${zeroPct}%` }} />
+                              <span className="absolute inset-y-0" style={{ left: `${left}%`, width: `${w}%`, background: barColor }} />
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 num text-right text-ink-2">{fmtUsd(r.execution_cost)}</td>
+                        <td className="py-3 num text-right text-ink-2">{(r.completion_rate * 100).toFixed(1)}%</td>
+                        <td className="px-5 py-3 num text-right text-ink-2">{r.vwap_slippage_bps.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+          </Panel>
+        </>
       )}
     </div>
   );

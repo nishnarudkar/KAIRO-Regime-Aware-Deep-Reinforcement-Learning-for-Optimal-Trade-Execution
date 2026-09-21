@@ -1,9 +1,42 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Database, RefreshCw, ShieldCheck, Activity, HelpCircle, Layers } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { getCurrentRegime, CurrentRegimeResponse, getExperiments, ExperimentSummaryResponse } from '../lib/api';
+import { Panel, PanelHeader, PageTitle, KeyValueTable, regimeColor, fmtUsd } from './ui';
+
+const REGIME_ORDER = ['Low Volatility', 'Normal', 'High Volatility', 'Stress'];
+
+const SCENARIOS = [
+  ['normal', 'Normal market'],
+  ['high_volatility', 'High volatility'],
+  ['low_liquidity', 'Low liquidity'],
+  ['stress', 'Market stress'],
+  ['regime_transition', 'Regime transition'],
+  ['liquidity_shock', 'Liquidity shock'],
+];
+
+const QUESTIONS = [
+  {
+    id: 'RQ1',
+    title: 'Deep RL versus execution baselines',
+    body: 'Does deep reinforcement learning outperform TWAP, VWAP and POV under identical market conditions?',
+  },
+  {
+    id: 'RQ2',
+    title: 'Value of regime information',
+    body: 'Does causally inferred market regime information lower implementation shortfall for an RL agent?',
+  },
+  {
+    id: 'RQ3',
+    title: 'Robustness through transitions',
+    body: 'Does regime-awareness help during regime transitions, and does it beat a shuffled-regime control?',
+  },
+  {
+    id: 'RQ4',
+    title: 'Algorithm generality',
+    body: 'Does the regime-aware improvement hold for both value-based (DQN) and policy-gradient (PPO) agents?',
+  },
+];
 
 export function ResearchTab() {
   const [regimeData, setRegimeData] = useState<CurrentRegimeResponse | null>(null);
@@ -18,8 +51,8 @@ export function ResearchTab() {
     try {
       const data = await getCurrentRegime('AAPL', selectedScenario);
       setRegimeData(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to detect market regime');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to detect market regime');
     } finally {
       setLoading(false);
     }
@@ -30,138 +63,139 @@ export function ResearchTab() {
     getExperiments()
       .then(setExperiments)
       .catch(() => setExperiments([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const probChartData = regimeData?.regime_probabilities
-    ? Object.entries(regimeData.regime_probabilities).map(([name, prob]) => ({
-        name,
-        probability: Number((prob * 100).toFixed(1)),
+  const probs = regimeData
+    ? REGIME_ORDER.filter((n) => n in regimeData.regime_probabilities).map((n) => ({
+        name: n,
+        p: regimeData.regime_probabilities[n],
       }))
     : [];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Causal Regime Detection Card */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-              <Database className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Causal HMM Market Regime Detection</h2>
-              <p className="text-xs text-slate-400">Real-time online forward inference P(S_t = k | X_1:t) without temporal lookahead</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <select
-              value={scenario}
-              onChange={(e) => {
-                setScenario(e.target.value);
-                fetchRegime(e.target.value);
-              }}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
-            >
-              <option value="normal">Scenario: Normal Market</option>
-              <option value="high_volatility">Scenario: High Volatility</option>
-              <option value="low_liquidity">Scenario: Low Liquidity</option>
-              <option value="stress">Scenario: Market Stress</option>
-              <option value="regime_transition">Scenario: Regime Transition</option>
-            </select>
-
-            <button
-              onClick={() => fetchRegime()}
-              disabled={loading}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
+    <div className="space-y-6">
+      <PageTitle eyebrow="Regime detection" title="Research">
+        <div className="flex items-center gap-2">
+          <label htmlFor="rs-scenario" className="sr-only">Scenario</label>
+          <select
+            id="rs-scenario"
+            value={scenario}
+            onChange={(e) => {
+              setScenario(e.target.value);
+              fetchRegime(e.target.value);
+            }}
+            className="field !w-auto"
+          >
+            {SCENARIOS.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => fetchRegime()} disabled={loading} className="btn btn-ghost">
+            {loading ? <span className="spinner" /> : null}
+            Refresh
+          </button>
         </div>
+      </PageTitle>
 
-        {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-            {error}
+      {error && (
+        <p role="alert" className="text-[13px] text-neg border-l-2 border-neg pl-3">
+          {error}
+        </p>
+      )}
+
+      {regimeData && (
+        <Panel>
+          <PanelHeader
+            title="Causal HMM regime"
+            note="Forward-filtered posterior P(Sₜ = k | X₁:ₜ), computed online with no lookahead."
+          />
+          <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] md:divide-x divide-line">
+            <div className="p-5">
+              <p className="label">Detected state</p>
+              <p className="text-[26px] font-semibold leading-tight mt-1.5 flex items-center gap-2.5" style={{ color: regimeColor(regimeData.regime_label) }}>
+                {regimeData.regime_label}
+              </p>
+              <p className="num text-[12px] text-ink-3 mt-0.5">State {regimeData.regime_id}</p>
+              <div className="mt-4">
+                <KeyValueTable
+                  rows={[
+                    { k: 'Price', v: fmtUsd(regimeData.current_price) },
+                    { k: 'Bid-ask spread', v: fmtUsd(regimeData.spread, 4) },
+                    { k: 'Volatility', v: `${(regimeData.volatility * 100).toFixed(3)}%` },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="p-5">
+              <p className="label mb-4">Posterior probability</p>
+              <ul className="space-y-3.5">
+                {probs.map(({ name, p }) => {
+                  const on = name === regimeData.regime_label;
+                  return (
+                    <li key={name} className="grid grid-cols-[110px_1fr_56px] items-center gap-3">
+                      <span className={`text-[13px] ${on ? 'text-ink font-medium' : 'text-ink-2'}`}>{name}</span>
+                      <span className="h-2.5 bg-raised block" role="img" aria-label={`${name}: ${(p * 100).toFixed(1)}%`}>
+                        <span
+                          className="block h-full transition-[width] duration-500"
+                          style={{ width: `${p * 100}%`, background: regimeColor(name), opacity: on ? 1 : 0.55 }}
+                        />
+                      </span>
+                      <span className={`num text-[13px] text-right ${on ? 'text-ink' : 'text-ink-2'}`}>{(p * 100).toFixed(1)}%</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           </div>
-        )}
+        </Panel>
+      )}
 
-        {regimeData && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Regime State Box */}
-            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+      {experiments.length > 0 && (
+        <Panel>
+          <PanelHeader title="Experiments" note="Registered experiment suites from the backend" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px] min-w-[640px]">
+              <thead>
+                <tr className="label text-left border-b border-line">
+                  <th className="px-5 py-2.5 font-medium">Name</th>
+                  <th className="py-2.5 font-medium">Scenarios</th>
+                  <th className="py-2.5 font-medium">Strategies</th>
+                  <th className="px-5 py-2.5 font-medium text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {experiments.map((e) => (
+                  <tr key={e.experiment_id} className="border-b border-line last:border-b-0">
+                    <td className="px-5 py-3 text-ink">{e.name}</td>
+                    <td className="py-3 num text-ink-2">{e.scenarios.length}</td>
+                    <td className="py-3 num text-ink-2">{e.strategies.length}</td>
+                    <td className="px-5 py-3 text-right text-ink-2">{e.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+
+      <Panel>
+        <PanelHeader title="Research questions" />
+        <ol>
+          {QUESTIONS.map((q) => (
+            <li key={q.id} className="grid grid-cols-[48px_1fr] gap-x-2 px-5 py-4 border-b border-line last:border-b-0">
+              <span className="num text-[12.5px] text-accent pt-0.5">{q.id}</span>
               <div>
-                <span className="text-xs text-slate-400 block mb-1">Detected Hidden State</span>
-                <h3 className="text-2xl font-extrabold text-emerald-400">{regimeData.regime_label}</h3>
-                <span className="text-xs text-slate-500 font-mono">Regime ID: {regimeData.regime_id}</span>
+                <h3 className="text-[14px] font-medium text-ink">{q.title}</h3>
+                <p className="text-[13px] text-ink-2 mt-0.5 max-w-2xl">{q.body}</p>
               </div>
-
-              <div className="space-y-2 mt-4 pt-4 border-t border-slate-800 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Current Price:</span>
-                  <span className="text-white font-mono">${regimeData.current_price.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Bid-Ask Spread:</span>
-                  <span className="text-white font-mono">${regimeData.spread.toFixed(4)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Volatility:</span>
-                  <span className="text-white font-mono">{(regimeData.volatility * 100).toFixed(3)}%</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Posterior Probabilities Bar Chart */}
-            <div className="md:col-span-2 bg-slate-950/60 border border-slate-800 rounded-xl p-5">
-              <h4 className="text-xs font-bold text-white mb-1">Posterior Regime Probabilities P(S_t = k | X_1:t)</h4>
-              <p className="text-[11px] text-slate-400 mb-4">Probability distribution over the 4 canonical HMM market regimes</p>
-
-              <div className="h-44 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={probChartData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis type="number" domain={[0, 100]} stroke="#64748b" tick={{ fontSize: 10 }} />
-                    <YAxis dataKey="name" type="category" stroke="#64748b" tick={{ fontSize: 10 }} width={100} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                    <Bar dataKey="probability" fill="#10b981" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Research Questions Summary Box */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex items-center gap-3 mb-4">
-          <HelpCircle className="h-5 w-5 text-indigo-400" />
-          <h3 className="text-base font-bold text-white">Research Questions (RQ1 – RQ4)</h3>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <h4 className="font-bold text-indigo-300 mb-1">RQ1: DRL Baseline Outperformance</h4>
-            <p className="text-slate-400">Does Deep Reinforcement Learning outperform conventional execution baselines (TWAP, VWAP, POV) under identical market conditions?</p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <h4 className="font-bold text-indigo-300 mb-1">RQ2: Regime Feature Value</h4>
-            <p className="text-slate-400">Does causally-inferred market regime information improve RL trade execution quality and lower implementation shortfall?</p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <h4 className="font-bold text-indigo-300 mb-1">RQ3: Transition Robustness & Ablation</h4>
-            <p className="text-slate-400">Does regime-awareness improve execution robustness during regime transitions, and does it outperform shuffled-regime controls?</p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <h4 className="font-bold text-indigo-300 mb-1">RQ4: Algorithmic Generalisation</h4>
-            <p className="text-slate-400">Is the regime-aware performance improvement algorithm-class-agnostic across both value-based (DQN) and policy-gradient (PPO) models?</p>
-          </div>
-        </div>
-      </div>
+            </li>
+          ))}
+        </ol>
+      </Panel>
     </div>
   );
 }

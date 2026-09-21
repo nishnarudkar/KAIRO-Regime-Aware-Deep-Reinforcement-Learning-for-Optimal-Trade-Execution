@@ -7,7 +7,7 @@ import { ExecutionMonitorTab } from '../components/ExecutionMonitorTab';
 import { ExecutionAnalyticsTab } from '../components/ExecutionAnalyticsTab';
 import { StrategyComparisonTab } from '../components/StrategyComparisonTab';
 import { ResearchTab } from '../components/ResearchTab';
-import { checkBackendHealth, getCurrentRegime, ExecutionRecord } from '../lib/api';
+import { checkBackendHealth, getCurrentRegime, ExecutionRecord, API_BASE_URL } from '../lib/api';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('new');
@@ -41,8 +41,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Top Header & Navigation */}
+    <div className="min-h-screen flex flex-col">
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -50,35 +49,31 @@ export default function Home() {
         currentRegimeLabel={currentRegimeLabel}
       />
 
-      {/* Main Tab Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'new' && (
-          <NewExecutionTab onExecutionCreated={handleExecutionCreated} />
-        )}
+      <main className="flex-1 w-full max-w-[1200px] mx-auto px-5 sm:px-8 py-8">
+        {activeTab === 'new' && <NewExecutionTab onExecutionCreated={handleExecutionCreated} />}
 
         {activeTab === 'monitor' && (
           <ExecutionMonitorTab
             executionRecord={executionRecord}
             onNavigateToAnalytics={() => setActiveTab('analytics')}
+            onNavigateToNew={() => setActiveTab('new')}
           />
         )}
 
         {activeTab === 'analytics' && (
-          <ExecutionAnalyticsTab executionRecord={executionRecord} />
+          <ExecutionAnalyticsTab executionRecord={executionRecord} onNavigateToNew={() => setActiveTab('new')} />
         )}
 
-        {activeTab === 'comparison' && (
-          <StrategyComparisonTab />
-        )}
+        {activeTab === 'comparison' && <StrategyComparisonTab />}
 
-        {activeTab === 'research' && (
-          <ResearchTab />
-        )}
+        {activeTab === 'research' && <ResearchTab />}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-6 mt-12 text-center text-xs text-slate-500">
-        <p>KAIRO — Regime-Aware Deep Reinforcement Learning for Optimal Trade Execution Platform</p>
+      <footer className="border-t border-line">
+        <div className="max-w-[1200px] mx-auto px-5 sm:px-8 py-4 flex flex-wrap justify-between gap-2 text-[12px] text-ink-3">
+          <span>Regime-aware deep reinforcement learning for optimal trade execution</span>
+          <span className="num">{API_BASE_URL}</span>
+        </div>
       </footer>
     </div>
   );

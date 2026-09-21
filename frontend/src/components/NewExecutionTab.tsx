@@ -1,12 +1,40 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Sliders, Play, Cpu, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react';
 import { simulateExecution, ExecutionRecord } from '../lib/api';
+import { Panel, PanelHeader, PageTitle, KeyValueTable, fmtInt } from './ui';
 
 interface NewExecutionTabProps {
   onExecutionCreated: (record: ExecutionRecord) => void;
 }
+
+const POLICIES = [
+  { id: 'TWAP', name: 'TWAP', group: 'Baseline', state: '—', desc: 'Uniform slices across the horizon' },
+  { id: 'VWAP', name: 'VWAP', group: 'Baseline', state: '—', desc: 'Follows the volume profile' },
+  { id: 'POV', name: 'POV (10%)', group: 'Baseline', state: '—', desc: 'Fixed 10% participation of market volume' },
+  { id: 'DQN', name: 'DQN', group: 'RL agent', state: '7', desc: 'Value-based agent, market state only' },
+  { id: 'Regime-Aware DQN', name: 'Regime-Aware DQN', group: 'RL agent', state: '12', desc: 'DQN plus causal HMM regime features' },
+  { id: 'PPO', name: 'PPO', group: 'RL agent', state: '7', desc: 'Policy-gradient agent, market state only' },
+  { id: 'Regime-Aware PPO', name: 'Regime-Aware PPO', group: 'RL agent', state: '12', desc: 'PPO plus causal HMM regime features' },
+];
+
+const SCENARIOS = [
+  { id: 'normal', name: 'Normal market', desc: 'Standard liquid trading conditions' },
+  { id: 'high_volatility', name: 'High volatility', desc: 'Elevated price volatility and wide spreads' },
+  { id: 'low_liquidity', name: 'Low liquidity', desc: 'Thin order book depth and high impact' },
+  { id: 'stress', name: 'Market stress', desc: 'Extreme volatility compounded with illiquidity' },
+  { id: 'regime_transition', name: 'Regime transition', desc: 'Volatility regime shifts mid-horizon' },
+  { id: 'liquidity_shock', name: 'Liquidity shock', desc: 'Order book liquidity collapses suddenly' },
+];
+
+const SYMBOLS = [
+  ['AAPL', 'Apple'],
+  ['MSFT', 'Microsoft'],
+  ['NVDA', 'NVIDIA'],
+  ['TSLA', 'Tesla'],
+  ['GOOGL', 'Alphabet'],
+  ['AMZN', 'Amazon'],
+];
 
 export function NewExecutionTab({ onExecutionCreated }: NewExecutionTabProps) {
   const [symbol, setSymbol] = useState('AAPL');
@@ -35,203 +63,190 @@ export function NewExecutionTab({ onExecutionCreated }: NewExecutionTabProps) {
         seed: Number(seed),
       });
       onExecutionCreated(record);
-    } catch (err: any) {
-      setError(err.message || 'Simulation execution failed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Simulation execution failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const policies = [
-    { id: 'TWAP', name: 'TWAP Baseline', desc: 'Uniform time-decay baseline', tag: 'Baseline' },
-    { id: 'VWAP', name: 'VWAP Baseline', desc: 'Volume-weighted profile fill', tag: 'Baseline' },
-    { id: 'POV', name: 'POV Baseline (10%)', desc: 'Fixed 10% volume participation rate', tag: 'Baseline' },
-    { id: 'DQN', name: 'Standard DQN', desc: 'Off-policy value iteration (7-dim state)', tag: 'RL Agent' },
-    { id: 'Regime-Aware DQN', name: 'Regime-Aware DQN', desc: 'Value iteration + HMM causal regime state (12-dim)', tag: 'Recommended' },
-    { id: 'PPO', name: 'Standard PPO', desc: 'On-policy actor-critic gradient (7-dim state)', tag: 'RL Agent' },
-    { id: 'Regime-Aware PPO', name: 'Regime-Aware PPO', desc: 'Policy gradient + HMM causal regime state (12-dim)', tag: 'RL Agent' },
-  ];
-
-  const scenarios = [
-    { id: 'normal', name: 'Normal Market', desc: 'Standard liquid trading conditions' },
-    { id: 'high_volatility', name: 'High Volatility', desc: 'Elevated price volatility & wide spreads' },
-    { id: 'low_liquidity', name: 'Low Liquidity', desc: 'Thin order book depth & high impact' },
-    { id: 'stress', name: 'Market Stress', desc: 'Extreme volatility + illiquidity compound' },
-    { id: 'regime_transition', name: 'Regime Transition', desc: 'Mid-horizon volatility regime shift' },
-    { id: 'liquidity_shock', name: 'Liquidity Shock', desc: 'Sudden order book liquidity collapse' },
-  ];
+  const selectedPolicy = POLICIES.find((p) => p.id === policy);
+  const selectedScenario = SCENARIOS.find((s) => s.id === scenario);
+  const perStep = horizonSteps > 0 ? Math.round(quantity / horizonSteps) : 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-sm">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-            <Sliders className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-white">Configure New Execution Order</h2>
-            <p className="text-xs text-slate-400">Select parent order parameters, execution policy, and market scenario</p>
-          </div>
-        </div>
+    <div>
+      <PageTitle eyebrow="New execution" title="Order ticket" />
 
-        {error && (
-          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
+        <div className="space-y-6">
+          <Panel>
+            <PanelHeader title="Parent order" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4 p-5">
+              <div>
+                <label htmlFor="symbol" className="label block mb-1.5">Symbol</label>
+                <select id="symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} className="field">
+                  {SYMBOLS.map(([s, n]) => (
+                    <option key={s} value={s}>
+                      {s} · {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Order Parameters */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Symbol</label>
-              <select
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none"
-              >
-                <option value="AAPL">AAPL (Apple Inc.)</option>
-                <option value="MSFT">MSFT (Microsoft)</option>
-                <option value="NVDA">NVDA (NVIDIA)</option>
-                <option value="TSLA">TSLA (Tesla)</option>
-                <option value="GOOGL">GOOGL (Alphabet)</option>
-                <option value="AMZN">AMZN (Amazon)</option>
-              </select>
-            </div>
+              <div>
+                <span className="label block mb-1.5" id="side-label">Side</span>
+                <div role="radiogroup" aria-labelledby="side-label" className="grid grid-cols-2 border border-line-strong rounded-[3px] overflow-hidden">
+                  {['BUY', 'SELL'].map((s) => {
+                    const on = side === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => setSide(s)}
+                        className={`py-[7px] text-[13px] font-medium transition-colors ${
+                          on
+                            ? s === 'BUY'
+                              ? 'bg-pos text-[#08140e]'
+                              : 'bg-neg text-[#170907]'
+                            : 'text-ink-3 hover:text-ink hover:bg-raised'
+                        }`}
+                      >
+                        {s === 'BUY' ? 'Buy' : 'Sell'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Order Side</label>
-              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setSide('BUY')}
-                  className={`py-1 text-xs font-medium rounded-lg transition-all ${
-                    side === 'BUY' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  BUY
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSide('SELL')}
-                  className={`py-1 text-xs font-medium rounded-lg transition-all ${
-                    side === 'SELL' ? 'bg-rose-600 text-white shadow' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  SELL
-                </button>
+              <div>
+                <label htmlFor="qty" className="label block mb-1.5">Quantity (shares)</label>
+                <input
+                  id="qty"
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => setQuantity(Number(e.target.value))}
+                  className="field num"
+                  min="1000"
+                  step="1000"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="horizon" className="label block mb-1.5">Horizon (minutes)</label>
+                <input
+                  id="horizon"
+                  type="number"
+                  value={horizonSteps}
+                  onChange={(e) => setHorizonSteps(Number(e.target.value))}
+                  className="field num"
+                  min="5"
+                  max="120"
+                />
               </div>
             </div>
+          </Panel>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Target Shares Quantity</label>
-              <input
-                type="number"
-                value={quantity}
-                onChange={(e) => setQuantity(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none"
-                placeholder="100000"
-                min="1000"
-                step="1000"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Horizon Steps (Minutes)</label>
-              <input
-                type="number"
-                value={horizonSteps}
-                onChange={(e) => setHorizonSteps(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none"
-                placeholder="30"
-                min="5"
-                max="120"
-              />
-            </div>
-          </div>
-
-          {/* Policy Selection */}
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-2">Execution Policy</label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {policies.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => setPolicy(p.id)}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                    policy === p.id
-                      ? 'bg-indigo-600/15 border-indigo-500 shadow-md shadow-indigo-500/10'
-                      : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-semibold text-sm text-white">{p.name}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                      p.tag === 'Recommended'
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                        : p.tag === 'RL Agent'
-                        ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                        : 'bg-slate-800 text-slate-400'
-                    }`}>
-                      {p.tag}
+          <Panel>
+            <PanelHeader title="Execution policy" note="Baselines are rule-based. RL agents are trained policies; regime-aware variants observe 5 extra HMM features." />
+            <div role="radiogroup" aria-label="Execution policy">
+              <div className="hidden sm:grid grid-cols-[1fr_88px_72px] px-5 py-2 border-b border-line label">
+                <span>Policy</span>
+                <span>Type</span>
+                <span className="text-right">State dim</span>
+              </div>
+              {POLICIES.map((p) => {
+                const on = policy === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setPolicy(p.id)}
+                    className={`w-full text-left grid grid-cols-1 sm:grid-cols-[1fr_88px_72px] items-baseline gap-x-4 px-5 py-3 border-b border-line last:border-b-0 relative transition-colors ${
+                      on ? 'bg-raised' : 'hover:bg-raised/50'
+                    }`}
+                  >
+                    {on && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent" />}
+                    <span>
+                      <span className={`block text-[13.5px] ${on ? 'text-ink font-medium' : 'text-ink'}`}>{p.name}</span>
+                      <span className="block text-[12.5px] text-ink-3">{p.desc}</span>
                     </span>
-                  </div>
-                  <p className="text-xs text-slate-400">{p.desc}</p>
-                </div>
-              ))}
+                    <span className="text-[12.5px] text-ink-2 hidden sm:block">{p.group}</span>
+                    <span className="num text-[12.5px] text-ink-2 text-right hidden sm:block">{p.state}</span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
+          </Panel>
 
-          {/* Scenario & Seed Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Market Condition Scenario</label>
-              <select
-                value={scenario}
-                onChange={(e) => setScenario(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none"
-              >
-                {scenarios.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} — {s.desc}
-                  </option>
-                ))}
-              </select>
+          <Panel>
+            <PanelHeader title="Market conditions" />
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-x-5 gap-y-4 p-5">
+              <div>
+                <label htmlFor="scenario" className="label block mb-1.5">Scenario</label>
+                <select id="scenario" value={scenario} onChange={(e) => setScenario(e.target.value)} className="field">
+                  {SCENARIOS.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[12.5px] text-ink-3 mt-1.5">{selectedScenario?.desc}</p>
+              </div>
+              <div>
+                <label htmlFor="seed" className="label block mb-1.5">Random seed</label>
+                <input id="seed" type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} className="field num" />
+              </div>
             </div>
+          </Panel>
+        </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Random Seed (Repeatability)</label>
-              <input
-                type="number"
-                value={seed}
-                onChange={(e) => setSeed(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none"
-                placeholder="42"
+        {/* Summary rail */}
+        <aside className="lg:sticky lg:top-[88px]">
+          <Panel>
+            <div className="px-5 py-4 border-b border-line">
+              <p className="label mb-1.5">Order summary</p>
+              <p className="text-[18px] font-semibold text-ink leading-snug">
+                <span className={side === 'BUY' ? 'text-pos' : 'text-neg'}>{side === 'BUY' ? 'Buy' : 'Sell'}</span>{' '}
+                <span className="tabular-nums">{fmtInt(Number(quantity))}</span> {symbol}
+              </p>
+            </div>
+            <div className="px-5 py-1">
+              <KeyValueTable
+                rows={[
+                  { k: 'Policy', v: <span className="font-sans">{selectedPolicy?.name}</span> },
+                  { k: 'Scenario', v: <span className="font-sans">{selectedScenario?.name}</span> },
+                  { k: 'Horizon', v: `${horizonSteps} min` },
+                  { k: 'Avg. per minute', v: `${fmtInt(perStep)} sh` },
+                  { k: 'Seed', v: seed },
+                ]}
               />
             </div>
-          </div>
-
-          {/* Submit Action */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-500 hover:opacity-95 text-white font-semibold text-sm shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Simulating Order Execution...</span>
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 fill-white" />
-                <span>Launch Execution Simulation</span>
-              </>
-            )}
-          </button>
-        </form>
-      </div>
+            <div className="p-5 pt-4 border-t border-line">
+              {error && (
+                <p role="alert" className="mb-3 text-[12.5px] text-neg border-l-2 border-neg pl-3">
+                  {error}
+                </p>
+              )}
+              <button type="submit" disabled={loading} className="btn btn-primary w-full">
+                {loading ? (
+                  <>
+                    <span className="spinner" />
+                    Simulating…
+                  </>
+                ) : (
+                  'Run simulation'
+                )}
+              </button>
+              <p className="text-[12px] text-ink-3 mt-3">Simulated fills only. No orders are sent to a broker.</p>
+            </div>
+          </Panel>
+        </aside>
+      </form>
     </div>
   );
 }
