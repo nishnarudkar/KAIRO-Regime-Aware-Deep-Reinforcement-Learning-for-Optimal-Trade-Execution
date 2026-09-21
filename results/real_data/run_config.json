@@ -1,0 +1,16 @@
+{
+  "scenarios": [
+    "aapl_real"
+  ],
+  "seeds": [
+    0
+  ],
+  "train_timesteps": null,
+  "horizon_steps": 30,
+  "order_participation": 0.055,
+  "side": "BUY",
+  "n_bars": 1950,
+  "source": "aapl_raw_20260830_20260904.parquet",
+  "note": "Transfer test: models trained on synthetic data only; IEX volume; 2 bps default spread",
+  "missing_models": []
+}

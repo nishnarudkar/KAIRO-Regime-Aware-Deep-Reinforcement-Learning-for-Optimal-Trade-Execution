@@ -84,12 +84,10 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
   const regimes = trajectory?.regime_trajectory ?? [];
 
   const hasActions = Object.values(metrics.action_counts).some((c) => c > 0);
-  const actionDistributionData = [
-    { name: '0%', count: metrics.action_counts['0'] || 0 },
-    { name: '10%', count: metrics.action_counts['1'] || 0 },
-    { name: '25%', count: metrics.action_counts['2'] || 0 },
-    { name: '50%', count: metrics.action_counts['3'] || 0 },
-  ];
+  // Every served policy acts in multiples of the TWAP slice (5 actions).
+  const twapActions = true;
+  const actionLabels = ['0×', '0.5×', '1×', '2×', '4×'];
+  const actionDistributionData = actionLabels.map((name, i) => ({ name, count: metrics.action_counts[String(i)] || 0 }));
 
   const chartMargin = { top: 8, right: 8, bottom: 0, left: 0 };
 
@@ -193,7 +191,7 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
 
       {hasActions && (
         <Panel>
-          <PanelHeader title="Action distribution" note="How often the policy chose each fraction of remaining inventory" />
+          <PanelHeader title="Action distribution" note={twapActions ? 'How often the policy chose each multiple of the TWAP slice (1× = on schedule)' : 'How often the policy chose each fraction of remaining inventory'} />
           <div className="h-56 p-4 pl-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={actionDistributionData} margin={chartMargin}>
