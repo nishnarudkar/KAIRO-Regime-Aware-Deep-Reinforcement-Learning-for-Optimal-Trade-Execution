@@ -15,7 +15,7 @@ A research-grade framework and production platform for executing large instituti
 
 ## 📊 Project Status & Progress Tracker
 
-**120 / 120 Unit Tests Passing ✅ | Stages 0–14 Complete**
+**120 / 120 Unit Tests Passing ✅ | All Stages 0–15 Complete**
 
 | Stage | Name | Status | Description / Key Deliverables |
 |---|---|---|---|
@@ -34,7 +34,7 @@ A research-grade framework and production platform for executing large instituti
 | **Stage 12**| Decision Explanation Layer| ✅ Complete | Post-hoc feature contribution (`DecisionExplainer`), regime influence scoring, `docs/explanations.md` |
 | **Stage 13**| Alpaca Paper Trading | ✅ Complete | `ExecutionRiskGate` (4 safety gates, kill switch), `AlpacaPaperExecutor`, `/paper` API endpoint |
 | **Stage 14**| Docker Packaging | ✅ Complete | Multi-container stack (`docker-compose.yml` for FastAPI, Next.js UI, MLflow), `docs/docker_deployment.md` |
-| **Stage 15**| Research & Audit | 🔜 Next | Formal research & reproducibility audit (`docs/research_audit.md`) |
+| **Stage 15**| Research & Audit | ✅ Complete | Formal research & reproducibility audit (`docs/research_audit.md`) |
 
 ---
 
@@ -165,6 +165,10 @@ regime-aware-trade-execution/
 │   ├── ppo_extension.md      # Stage 9 PPO extension & RQ4 analysis
 │   ├── fastapi_backend.md    # Stage 10 FastAPI backend reference
 │   ├── frontend_ui.md        # Stage 11 Next.js frontend UI documentation
+│   ├── explanations.md       # Stage 12 Decision explanation layer documentation
+│   ├── alpaca_paper_trading.md # Stage 13 Risk gates & Alpaca paper trading documentation
+│   ├── docker_deployment.md  # Stage 14 Docker containerization documentation
+│   ├── research_audit.md     # Stage 15 Formal research & reproducibility audit
 │   └── research_questions.md # Formal research questions (RQ1–RQ4)
 ├── frontend/                 # Next.js 14 TypeScript Product UI
 │   ├── src/app/              # App router pages & tab components
@@ -175,16 +179,18 @@ regime-aware-trade-execution/
 │   ├── run_ppo_experiment.py # 4-model PPO comparison runner
 │   └── evaluate.py           # Model evaluation script
 ├── src/                      # Core python packages
-│   ├── agents/               # DQNAgent, PPOAgent, evaluator, A/B runners
+│   ├── agents/               # DQNAgent, PPOAgent, DecisionExplainer, evaluator
 │   ├── api/                  # FastAPI app, schemas, store, routers
 │   ├── baselines/            # TWAP, VWAP, POV strategies & runner
 │   ├── environment/          # TradeExecutionEnv, RegimeAwareTradeExecutionEnv
-│   ├── execution/            # ExecutionSimulator & impact models
+│   ├── execution/            # ExecutionSimulator, risk gates, paper executor
 │   ├── features/             # Feature engineering pipeline
 │   ├── regimes/              # MarketHMM, CausalRegimeInference, scaler
 │   └── utils/                # Logging, seeding, MLflow utilities
-├── tests/                    # Unit test suite (108 tests)
+├── tests/                    # Unit test suite (120 tests passing)
 │   ├── test_api.py           # FastAPI TestClient tests
+│   ├── test_explainer.py     # Stage 12 decision explanation tests
+│   ├── test_alpaca_risk_gates.py # Stage 13 risk gates & paper trading tests
 │   ├── test_ppo_agent.py     # PPO agent & experiment tests
 │   ├── test_experiments.py   # Research suite tests
 │   ├── test_regime_aware_env.py
