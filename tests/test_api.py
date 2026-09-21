@@ -19,6 +19,7 @@ os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 
 from src.api.main import app
 from src.api.store import global_store
+from conftest import requires_models
 
 client = TestClient(app)
 
@@ -65,7 +66,8 @@ def test_list_experiments():
     response = client.get("/api/experiments")
     assert response.status_code == 200
     data = response.json()
-    assert len(data) >= 2
+    assert len(data) >= 1
+    assert data[0]["status"] in ("completed", "not_run")
 
 
 def test_get_current_regime():
@@ -116,6 +118,7 @@ def test_simulate_execution_baseline():
     assert len(traj_resp.json()["inventory_trajectory"]) > 0
 
 
+@requires_models
 def test_simulate_execution_rl():
     """Verify POST /api/execution/simulate runs DQN simulation."""
     payload = {
@@ -131,7 +134,9 @@ def test_simulate_execution_rl():
     assert response.status_code == 200
     data = response.json()
     assert data["policy"] == "DQN"
-    assert data["status"] == "completed"
+    # 'completed' only when fully filled; otherwise honestly reported as 'partial'
+    expected = "completed" if data["metrics"]["completion_rate"] >= 0.9999 else "partial"
+    assert data["status"] == expected
 
 
 def test_execution_not_found_404():

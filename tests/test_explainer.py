@@ -11,6 +11,7 @@ Tests:
 """
 
 import pytest
+from conftest import requires_models
 import numpy as np
 from fastapi.testclient import TestClient
 
@@ -67,6 +68,7 @@ def test_explainer_regime_aware_state(explainer, dummy_agent):
     assert sum(result["feature_percentages"].values()) == pytest.approx(100.0, abs=1e-3)
 
 
+@requires_models
 def test_api_explain_endpoint():
     client = TestClient(app)
     payload = {
@@ -83,6 +85,7 @@ def test_api_explain_endpoint():
     assert "summary" in data
 
 
+@requires_models
 def test_api_get_execution_explain():
     client = TestClient(app)
     # First simulate an execution run to populate store

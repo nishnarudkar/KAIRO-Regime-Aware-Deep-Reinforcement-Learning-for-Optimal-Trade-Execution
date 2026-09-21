@@ -140,7 +140,9 @@ def test_executor_safety_constraint():
         )
 
 
-def test_api_paper_and_risk_endpoints():
+def test_api_paper_and_risk_endpoints(monkeypatch):
+    monkeypatch.setenv("KAIRO_API_KEY", "test-key")
+    auth = {"X-API-Key": "test-key"}
     client = TestClient(app)
 
     # Test GET /api/execution/risk-status
@@ -159,20 +161,20 @@ def test_api_paper_and_risk_endpoints():
         "arrival_price": 100.0,
         "target_inventory": 100000.0,
     }
-    p_resp = client.post("/api/execution/paper", json=p_payload)
+    p_resp = client.post("/api/execution/paper", json=p_payload, headers=auth)
     assert p_resp.status_code == 200
     p_data = p_resp.json()
     assert p_data["status"] == "filled"
 
     # Test POST /api/execution/kill-switch
-    k_resp = client.post("/api/execution/kill-switch", json={"active": True})
+    k_resp = client.post("/api/execution/kill-switch", json={"active": True}, headers=auth)
     assert k_resp.status_code == 200
     assert k_resp.json()["kill_switch_active"] is True
 
     # Confirm order rejected when kill switch active
-    p_resp2 = client.post("/api/execution/paper", json=p_payload)
+    p_resp2 = client.post("/api/execution/paper", json=p_payload, headers=auth)
     assert p_resp2.status_code == 200
     assert p_resp2.json()["status"] == "rejected"
 
     # Reset kill switch
-    client.post("/api/execution/kill-switch", json={"active": False})
+    client.post("/api/execution/kill-switch", json={"active": False}, headers=auth)

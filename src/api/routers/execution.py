@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 import pandas as pd
 import numpy as np
 
@@ -32,6 +32,7 @@ from src.api.schemas import (
     ExecutionTrajectoryResponse,
     BacktestResponse,
     BacktestResultItem,
+    BacktestError,
     DecisionExplanationRequest,
     DecisionExplanationResponse,
     PaperOrderRequest,
@@ -40,6 +41,9 @@ from src.api.schemas import (
     SetKillSwitchRequest,
 )
 from src.api.store import global_store
+from src.api.security import require_api_key
+from src.api import engine
+from src.agents import registry
 from src.evaluation.scenarios import generate_scenario_data, SCENARIOS
 from src.execution.risk_gates import ExecutionRiskGate, RiskGateConfig
 from src.execution.alpaca_paper import AlpacaPaperExecutor
@@ -51,278 +55,183 @@ global_risk_gate = ExecutionRiskGate()
 global_paper_executor = AlpacaPaperExecutor(risk_gate=global_risk_gate, mock_mode=True)
 
 
-# ── Helper Execution Engine Functions ──────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────
 
-def _run_baseline_simulation(
-    strategy_name: str,
-    market_data: pd.DataFrame,
-    target_inventory: float,
-    side: str,
-    horizon_steps: int,
-) -> Tuple[Any, Any]:
-    from src.baselines import TWAPStrategy, VWAPStrategy, POVStrategy
-    from src.baselines.runner import BaselineRunner
+BASELINE_SET = set(registry.BASELINE_POLICIES)
+RL_SET = set(registry.RL_POLICIES)
+ALL_POLICIES = sorted(BASELINE_SET | RL_SET)
 
-    if strategy_name == "TWAP":
-        strategy = TWAPStrategy(target_inventory=target_inventory, total_steps=horizon_steps)
-    elif strategy_name == "VWAP":
-        strategy = VWAPStrategy(target_inventory=target_inventory, total_steps=horizon_steps)
-    elif strategy_name == "POV":
-        strategy = POVStrategy(target_inventory=target_inventory, target_rate=0.10)
-    else:
-        raise ValueError(f"Unknown baseline strategy: {strategy_name}")
 
-    runner = BaselineRunner()
-    result = runner.run(
-        strategy=strategy,
-        market_data=market_data,
-        target_inventory=target_inventory,
-        side=side,
-        horizon_steps=horizon_steps,
+def _check_scenario(name: str) -> None:
+    if name not in SCENARIOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown scenario '{name}'. Valid options: {list(SCENARIOS.keys())}",
+        )
+
+
+def _check_side(side: str) -> str:
+    side = side.upper()
+    if side not in ("BUY", "SELL"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="side must be 'BUY' or 'SELL'.")
+    return side
+
+
+def _metrics_dto(r: Dict[str, Any], counts: Dict[str, int]) -> ExecutionMetricsResponse:
+    return ExecutionMetricsResponse(
+        implementation_shortfall=float(r["implementation_shortfall"]),
+        implementation_shortfall_bps=float(r["implementation_shortfall_bps"]),
+        execution_cost=float(r["total_execution_cost"]),
+        market_impact_cost=float(r["total_impact_cost"]),
+        total_transaction_fees=float(r["total_transaction_fees"]),
+        terminal_penalty=float(r["terminal_penalty"]),
+        completion_rate=float(min(1.0, r["fill_rate"])),
+        average_execution_price=float(r["average_execution_price"]),
+        arrival_price=float(r["arrival_price"]),
+        market_vwap_price=float(r["vwap_market_price"]),
+        vwap_slippage_bps=float(r["vwap_slippage_bps"]),
+        action_counts=counts,
     )
-    return result, runner
-
-
-def _fit_hmm_for_data(df: pd.DataFrame):
-    from src.regimes.hmm_model import MarketHMM
-    from src.regimes.features import RegimeFeatureEngine, RegimeFeatureScaler
-
-    engine = RegimeFeatureEngine()
-    feat_df = engine.compute_features(df)
-    _, X = engine.extract_feature_matrix(feat_df, drop_na=True)
-    scaler = RegimeFeatureScaler(method="robust")
-    hmm = MarketHMM(n_regimes=4, random_state=42)
-    hmm.fit(X, scaler=scaler)
-    return hmm, feat_df
-
-
-def _run_rl_simulation(
-    policy_name: str,
-    market_data: pd.DataFrame,
-    target_inventory: float,
-    side: str,
-    horizon_steps: int,
-    seed: int,
-) -> Tuple[Any, Any]:
-    from src.agents.dqn_agent import DQNAgent
-    from src.agents.ppo_agent import PPOAgent
-    from src.agents.evaluator import evaluate_agent
-    from src.environment import TradeExecutionEnv, RegimeAwareTradeExecutionEnv
-
-    use_regime = "Regime" in policy_name or "Regime-Aware" in policy_name
-    is_ppo = "PPO" in policy_name
-
-    split_idx = int(len(market_data) * 0.70)
-    train_data = market_data.iloc[:split_idx].reset_index(drop=True)
-    test_data = market_data.iloc[split_idx:].reset_index(drop=True)
-
-    if use_regime:
-        hmm, train_feat = _fit_hmm_for_data(train_data)
-        from src.regimes.features import RegimeFeatureEngine
-        test_feat = RegimeFeatureEngine().compute_features(test_data)
-
-        train_env = RegimeAwareTradeExecutionEnv(
-            hmm_model=hmm,
-            regime_feature_data=train_feat,
-            market_data=train_data,
-            target_inventory=target_inventory,
-            side=side,
-            horizon_steps=horizon_steps,
-        )
-        eval_env = RegimeAwareTradeExecutionEnv(
-            hmm_model=hmm,
-            regime_feature_data=test_feat,
-            market_data=test_data,
-            target_inventory=target_inventory,
-            side=side,
-            horizon_steps=horizon_steps,
-        )
-    else:
-        train_env = TradeExecutionEnv(
-            market_data=train_data,
-            target_inventory=target_inventory,
-            side=side,
-            horizon_steps=horizon_steps,
-        )
-        eval_env = TradeExecutionEnv(
-            market_data=test_data,
-            target_inventory=target_inventory,
-            side=side,
-            horizon_steps=horizon_steps,
-        )
-
-    if is_ppo:
-        agent = PPOAgent(env=train_env, seed=seed, n_steps=256, batch_size=32, verbose=0)
-        agent.train(total_timesteps=512)
-    else:
-        agent = DQNAgent(env=train_env, seed=seed, learning_starts=100, verbose=0)
-        agent.train(total_timesteps=512)
-
-    result = evaluate_agent(
-        agent=agent,
-        market_data=test_data,
-        target_inventory=target_inventory,
-        side=side,
-        horizon_steps=horizon_steps,
-        seed=seed,
-        agent_name=policy_name,
-        env=eval_env,
-    )
-    return result, eval_env
 
 
 # ── Static Routes (MUST be defined before /{id} parameter routes) ────────────────
 
 @router.post("/simulate", response_model=ExecutionResponse, status_code=status.HTTP_200_OK)
 def simulate_execution(req: ExecutionSimulateRequest):
-    """Run a single execution simulation for the requested policy and scenario."""
-    if req.scenario not in SCENARIOS:
+    """
+    Run one execution on an out-of-sample window of a synthetic market.
+
+    Learned policies are served from trained checkpoints (see scripts/train_models.py);
+    a policy without a checkpoint returns 503 instead of being trained on the fly.
+    """
+    _check_scenario(req.scenario)
+    side = _check_side(req.side)
+    if req.policy not in BASELINE_SET | RL_SET:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown scenario '{req.scenario}'. Valid options: {list(SCENARIOS.keys())}",
+            detail=f"Unsupported policy '{req.policy}'. Valid options: {ALL_POLICIES}",
         )
+
+    df, split = engine.get_market(req.scenario, req.seed)
+    starts = engine.test_starts(split, req.horizon_steps)
+    if not starts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="horizon_steps too large for the test region.")
+    start = engine.pick_window(starts, req.seed)
+
+    try:
+        res = engine.run_policy(req.policy, df, start, req.horizon_steps, side, req.quantity, record_obs=True)
+    except registry.ModelUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
     exec_id = str(uuid.uuid4())
-    market_data = generate_scenario_data(req.scenario, seed=req.seed)
-
-    baselines = {"TWAP", "VWAP", "POV"}
-    rl_policies = {"DQN", "Regime-Aware DQN", "PPO", "Regime-Aware PPO"}
-
-    if req.policy in baselines:
-        res, runner = _run_baseline_simulation(
-            strategy_name=req.policy,
-            market_data=market_data,
-            target_inventory=req.quantity,
-            side=req.side,
-            horizon_steps=req.horizon_steps,
-        )
-        inv_traj = [req.quantity] + [s.remaining_inventory for s in runner.simulator.execution_history]
-        act_traj = [0] * len(inv_traj)
-        price_traj = market_data["price"].iloc[:len(inv_traj)].tolist()
-        act_counts = {}
-    elif req.policy in rl_policies:
-        res, eval_env = _run_rl_simulation(
-            policy_name=req.policy,
-            market_data=market_data,
-            target_inventory=req.quantity,
-            side=req.side,
-            horizon_steps=req.horizon_steps,
-            seed=req.seed,
-        )
-        inv_traj = res.inventory_trajectory
-        act_traj = res.action_trajectory
-        price_traj = eval_env.market_data["price"].iloc[:len(inv_traj)].tolist()
-        act_counts = res.action_counts
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported policy '{req.policy}'. Valid options: {list(baselines | rl_policies)}",
-        )
-
-    str_act_counts = {str(k): int(v) for k, v in act_counts.items()}
-
-    metrics_dto = ExecutionMetricsResponse(
-        implementation_shortfall=float(res.implementation_shortfall),
-        implementation_shortfall_bps=float(res.implementation_shortfall_bps),
-        execution_cost=float(res.execution_cost),
-        market_impact_cost=float(getattr(res, "market_impact_cost", 0.0)),
-        total_transaction_fees=float(getattr(res, "total_transaction_fees", 0.0)),
-        terminal_penalty=float(getattr(res, "terminal_penalty", 0.0)),
-        completion_rate=float(res.completion_rate),
-        average_execution_price=float(res.average_execution_price),
-        arrival_price=float(res.arrival_price),
-        market_vwap_price=float(res.market_vwap_price),
-        vwap_slippage_bps=float(res.vwap_slippage_bps),
-        action_counts=str_act_counts,
-    )
+    counts = engine.action_counts(res["action_trajectory"])
+    metrics_dto = _metrics_dto(res, counts)
 
     trajectory_dto = ExecutionTrajectoryResponse(
         execution_id=exec_id,
-        inventory_trajectory=inv_traj,
-        action_trajectory=act_traj,
-        price_trajectory=price_traj,
+        inventory_trajectory=res["inventory_trajectory"],
+        action_trajectory=res["action_trajectory"],
+        price_trajectory=res["price_trajectory"],
+        regime_trajectory=res["regime_trajectory"] or None,
+        observation_trajectory=res["observation_trajectory"] or None,
+        window_start=start,
     )
-
     response_dto = ExecutionResponse(
         execution_id=exec_id,
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         symbol=req.symbol,
-        side=req.side,
+        side=side,
         target_inventory=req.quantity,
-        executed_inventory=float(res.executed_inventory),
-        remaining_inventory=float(res.remaining_inventory),
+        executed_inventory=float(res["executed_inventory"]),
+        remaining_inventory=float(res["remaining_inventory"]),
         policy=req.policy,
         scenario=req.scenario,
-        status="completed",
+        status="completed" if metrics_dto.completion_rate >= 0.9999 else "partial",
         metrics=metrics_dto,
     )
-
     global_store.save_execution(response_dto, trajectory_dto)
     return response_dto
 
 
 @router.post("/backtest", response_model=BacktestResponse, status_code=status.HTTP_200_OK)
 def run_backtest(req: BacktestRequest):
-    """Run backtest comparison across multiple baseline and DRL policies."""
-    if req.scenario not in SCENARIOS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown scenario '{req.scenario}'. Valid options: {list(SCENARIOS.keys())}",
-        )
+    """
+    Compare policies over several out-of-sample windows of one synthetic market.
 
-    backtest_id = str(uuid.uuid4())
-    market_data = generate_scenario_data(req.scenario, seed=req.seed)
-    results_items: List[BacktestResultItem] = []
+    Every policy runs on exactly the same windows (paired comparison). Policies that cannot
+    be evaluated are listed in ``errors`` instead of being silently dropped.
+    """
+    _check_scenario(req.scenario)
+    side = _check_side(req.side)
+    unknown = [p for p in req.policies if p not in BASELINE_SET | RL_SET]
+    if unknown:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Unsupported policies {unknown}. Valid options: {ALL_POLICIES}")
 
-    baselines = {"TWAP", "VWAP", "POV"}
-    rl_policies = {"DQN", "Regime-Aware DQN", "PPO", "Regime-Aware PPO"}
+    df, split = engine.get_market(req.scenario, req.seed)
+    starts = engine.test_starts(split, req.horizon_steps)
+    if not starts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="horizon_steps too large for the test region.")
+    offset = req.seed % len(starts)
+    starts = (starts[offset:] + starts[:offset])[: req.n_windows]
 
-    for policy in req.policies:
+    per_policy: Dict[str, Dict[str, np.ndarray]] = {}
+    errors: List[BacktestError] = []
+    policies = list(dict.fromkeys(req.policies))
+    if "TWAP" not in policies:
+        policies.append("TWAP")   # reference for the paired difference
+    for policy in policies:
         try:
-            if policy in baselines:
-                res, _ = _run_baseline_simulation(
-                    strategy_name=policy,
-                    market_data=market_data,
-                    target_inventory=req.quantity,
-                    side=req.side,
-                    horizon_steps=req.horizon_steps,
-                )
-            elif policy in rl_policies:
-                res, _ = _run_rl_simulation(
-                    policy_name=policy,
-                    market_data=market_data,
-                    target_inventory=req.quantity,
-                    side=req.side,
-                    horizon_steps=req.horizon_steps,
-                    seed=req.seed,
-                )
-            else:
-                continue
-
-            results_items.append(
-                BacktestResultItem(
-                    policy=policy,
-                    implementation_shortfall_bps=float(res.implementation_shortfall_bps),
-                    execution_cost=float(res.execution_cost),
-                    completion_rate=float(res.completion_rate),
-                    vwap_slippage_bps=float(res.vwap_slippage_bps),
-                )
-            )
-        except Exception:
+            runs = [engine.run_policy(policy, df, s, req.horizon_steps, side, req.quantity) for s in starts]
+        except registry.ModelUnavailable as exc:
+            errors.append(BacktestError(policy=policy, detail=str(exc)))
             continue
+        except Exception as exc:
+            errors.append(BacktestError(policy=policy, detail=f"{type(exc).__name__}: {exc}"))
+            continue
+        per_policy[policy] = {
+            "is": np.array([r["implementation_shortfall_bps"] for r in runs]),
+            "cost": np.array([r["total_execution_cost"] for r in runs]),
+            "fill": np.array([min(1.0, r["fill_rate"]) for r in runs]),
+            "slip": np.array([r["vwap_slippage_bps"] for r in runs]),
+        }
+
+    twap = per_policy.get("TWAP")
+    items: List[BacktestResultItem] = []
+    for policy in req.policies:
+        d = per_policy.get(policy)
+        if d is None:
+            continue
+        lo, hi = engine.bootstrap_ci(d["is"])
+        items.append(BacktestResultItem(
+            policy=policy,
+            implementation_shortfall_bps=float(d["is"].mean()),
+            implementation_shortfall_bps_std=float(d["is"].std(ddof=1)) if len(d["is"]) > 1 else 0.0,
+            ci_low=lo, ci_high=hi,
+            vs_twap_bps=float((d["is"] - twap["is"]).mean()) if twap is not None and policy != "TWAP" else None,
+            vs_twap_ci_low=(engine.bootstrap_ci(d["is"] - twap["is"])[0] if twap is not None and policy != "TWAP" else None),
+            vs_twap_ci_high=(engine.bootstrap_ci(d["is"] - twap["is"])[1] if twap is not None and policy != "TWAP" else None),
+            execution_cost=float(d["cost"].mean()),
+            completion_rate=float(d["fill"].mean()),
+            vwap_slippage_bps=float(d["slip"].mean()),
+            n_windows=int(len(starts)),
+        ))
 
     return BacktestResponse(
-        backtest_id=backtest_id,
+        backtest_id=str(uuid.uuid4()),
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         symbol=req.symbol,
-        side=req.side,
+        side=side,
         quantity=req.quantity,
         scenario=req.scenario,
-        results=results_items,
+        n_windows=len(starts),
+        results=items,
+        errors=[e for e in errors if e.policy in req.policies],
     )
 
 
-@router.post("/paper", response_model=PaperOrderResponse, status_code=status.HTTP_200_OK)
+@router.post("/paper", response_model=PaperOrderResponse, status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_api_key)])
 def submit_paper_order(req: PaperOrderRequest):
     """Validate order against pre-trade risk gates and route to Alpaca Paper Trading execution engine."""
     result = global_paper_executor.execute_slice(
@@ -359,42 +268,31 @@ def get_risk_status():
     )
 
 
-@router.post("/kill-switch", response_model=RiskStatusResponse)
+@router.post("/kill-switch", response_model=RiskStatusResponse, dependencies=[Depends(require_api_key)])
 def set_kill_switch(req: SetKillSwitchRequest):
     """Trigger or reset emergency kill switch to immediately halt paper execution."""
     global_risk_gate.set_kill_switch(req.active)
     return get_risk_status()
 
 
-@router.post("/explain", response_model=DecisionExplanationResponse)
-def explain_action_decision(req: DecisionExplanationRequest):
-    """Compute post-hoc feature attributions and regime influence score for a given observation state and action."""
+def _explain(policy: str, state: List[float], action: Optional[int]) -> DecisionExplanationResponse:
+    """Explain a decision of a *trained* policy network (finite-difference sensitivities)."""
     from src.agents.explainer import DecisionExplainer
 
-    explainer = DecisionExplainer()
-    state_arr = np.array(req.state, dtype=np.float32)
+    if policy not in RL_SET:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Only learned policies can be explained: {sorted(RL_SET)}")
+    try:
+        lp = registry.load_policy(policy)
+    except registry.ModelUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if len(state) != lp.spec["state_dim"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"'{policy}' expects a {lp.spec['state_dim']}-dimensional state, got {len(state)}.")
 
-    def dummy_agent_eval(s):
-        res = np.ones(4, dtype=np.float32) * 0.25
-        if len(s) >= 4:
-            res[1] += s[0] * 0.1
-            res[2] += s[3] * 0.2
-        if len(s) >= 12:
-            res[3] += s[11] * 0.3
-        return res
-
-    class ProxyAgent:
-        def predict(self, s):
-            return int(np.argmax(dummy_agent_eval(s)))
-        def get_q_values(self, s):
-            return dummy_agent_eval(s)
-
-    result = explainer.explain_step(
-        agent=ProxyAgent(),
-        state=state_arr,
-        action=req.action,
-    )
-
+    state_arr = np.array(state, dtype=np.float32)
+    chosen = int(action) if action is not None else int(lp.agent.predict(state_arr, deterministic=True))
+    result = DecisionExplainer().explain_step(agent=lp.agent, state=state_arr, action=chosen)
     return DecisionExplanationResponse(
         action=result["action"],
         action_label=result["action_label"],
@@ -405,6 +303,12 @@ def explain_action_decision(req: DecisionExplanationRequest):
         action_advantages=result["action_advantages"],
         summary=result["summary"],
     )
+
+
+@router.post("/explain", response_model=DecisionExplanationResponse)
+def explain_action_decision(req: DecisionExplanationRequest):
+    """Feature attributions and regime influence for a decision of the trained policy network."""
+    return _explain(req.policy, req.state, req.action)
 
 
 # ── Dynamic Parameter Routes (MUST be defined after static routes) ──────────────
@@ -446,7 +350,10 @@ def get_execution_trajectory(id: str = Path(..., description="Execution UUID str
 
 
 @router.get("/{id}/explain", response_model=DecisionExplanationResponse)
-def get_execution_explanation(id: str = Path(..., description="Execution UUID string")):
+def get_execution_explanation(
+    id: str = Path(..., description="Execution UUID string"),
+    step: int = Query(default=0, ge=0, description="Step of the execution to explain"),
+):
     """Retrieve feature attribution explanation for a completed execution run."""
     record = global_store.get_execution(id)
     if not record:
@@ -455,15 +362,14 @@ def get_execution_explanation(id: str = Path(..., description="Execution UUID st
             detail=f"Execution ID '{id}' not found.",
         )
 
-    use_regime = "Regime" in record.policy or "Regime-Aware" in record.policy
-    dim = 12 if use_regime else 7
-    sample_state = [1.0, 0.5, 0.001, 0.02, 0.0005, 1.0, 1.0]
-    if use_regime:
-        sample_state += [2.0, 0.1, 0.2, 0.6, 0.1]
-
-    req = DecisionExplanationRequest(
-        state=sample_state,
-        action=1,
-        policy=record.policy,
-    )
-    return explain_action_decision(req)
+    traj = global_store.get_trajectory(id)
+    if record.policy not in RL_SET or not traj or not traj.observation_trajectory:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Explanations are only available for learned policies (baselines have no network).",
+        )
+    obs = traj.observation_trajectory
+    if step >= len(obs):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"step must be < {len(obs)} for this execution.")
+    return _explain(record.policy, obs[step], traj.action_trajectory[step])

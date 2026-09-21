@@ -23,8 +23,8 @@ class ExecutionSimulateRequest(BaseModel):
     """Payload for POST /api/execution/simulate."""
     symbol: str = Field(default="AAPL", description="Ticker symbol")
     side: str = Field(default="BUY", description="Order side: 'BUY' or 'SELL'")
-    quantity: float = Field(default=100_000.0, gt=0, description="Target execution inventory quantity")
-    horizon_steps: int = Field(default=30, gt=0, description="Total execution horizon in steps")
+    quantity: float = Field(default=100_000.0, gt=0, le=10_000_000, description="Target execution inventory quantity")
+    horizon_steps: int = Field(default=30, ge=5, le=120, description="Total execution horizon in one-minute steps")
     policy: str = Field(
         default="DQN",
         description="Policy to execute: TWAP, VWAP, POV, DQN, Regime-Aware DQN, PPO, Regime-Aware PPO",
@@ -40,8 +40,9 @@ class BacktestRequest(BaseModel):
     """Payload for POST /api/execution/backtest."""
     symbol: str = Field(default="AAPL", description="Ticker symbol")
     side: str = Field(default="BUY", description="Order side: 'BUY' or 'SELL'")
-    quantity: float = Field(default=100_000.0, gt=0, description="Target execution inventory quantity")
-    horizon_steps: int = Field(default=30, gt=0, description="Total execution horizon in steps")
+    quantity: float = Field(default=100_000.0, gt=0, le=10_000_000, description="Target execution inventory quantity")
+    horizon_steps: int = Field(default=30, ge=5, le=120, description="Total execution horizon in one-minute steps")
+    n_windows: int = Field(default=10, ge=1, le=30, description="Number of out-of-sample windows to average over")
     policies: List[str] = Field(
         default=["TWAP", "VWAP", "POV", "DQN", "Regime-Aware DQN", "PPO", "Regime-Aware PPO"],
         description="List of policies/baselines to run in the backtest comparison",
@@ -78,6 +79,9 @@ class ExecutionTrajectoryResponse(BaseModel):
     action_trajectory: List[int] = Field(description="Action index selected at each step")
     price_trajectory: List[float] = Field(description="Market price trajectory at each step")
     regime_trajectory: Optional[List[int]] = Field(default=None, description="HMM market regime ID at each step")
+    observation_trajectory: Optional[List[List[float]]] = Field(
+        default=None, description="Observation vector the policy saw at each step (learned policies only)")
+    window_start: Optional[int] = Field(default=None, description="Bar index at which the execution window starts")
 
 
 # ── Execution Response Schemas ──────────────────────────────────────────────────
@@ -93,17 +97,30 @@ class ExecutionResponse(BaseModel):
     remaining_inventory: float
     policy: str
     scenario: str
-    status: str = "completed"
+    status: str = Field(default="completed", description="'completed' when fully filled, 'partial' otherwise")
     metrics: ExecutionMetricsResponse
 
 
 class BacktestResultItem(BaseModel):
-    """Summary item for a single strategy inside a backtest response."""
+    """Summary item for a single strategy inside a backtest response (mean over windows)."""
     policy: str
     implementation_shortfall_bps: float
+    implementation_shortfall_bps_std: float = 0.0
+    ci_low: float = 0.0
+    ci_high: float = 0.0
+    vs_twap_bps: Optional[float] = Field(default=None, description="Paired mean IS difference vs TWAP (negative = cheaper)")
+    vs_twap_ci_low: Optional[float] = None
+    vs_twap_ci_high: Optional[float] = None
     execution_cost: float
     completion_rate: float
     vwap_slippage_bps: float
+    n_windows: int = 1
+
+
+class BacktestError(BaseModel):
+    """A policy that could not be evaluated, with the reason."""
+    policy: str
+    detail: str
 
 
 class BacktestResponse(BaseModel):
@@ -114,7 +131,9 @@ class BacktestResponse(BaseModel):
     side: str
     quantity: float
     scenario: str
+    n_windows: int = 1
     results: List[BacktestResultItem]
+    errors: List[BacktestError] = Field(default_factory=list)
 
 
 # ── Regime & Metadata Schemas ───────────────────────────────────────────────────
@@ -129,6 +148,7 @@ class CurrentRegimeResponse(BaseModel):
     regime_id: int
     regime_label: str
     regime_probabilities: Dict[str, float]
+    true_regime: Optional[str] = Field(default=None, description="Latent regime of the synthetic market (validation only)")
 
 
 class BaselineStrategyResponse(BaseModel):
@@ -145,9 +165,21 @@ class ModelMetadataResponse(BaseModel):
     name: str
     algorithm_class: str
     regime_aware: bool
-    status: str
+    status: str = Field(description="'trained' when a checkpoint exists, otherwise 'untrained'")
+    trained: bool = False
     state_dim: int
     net_arch: List[int]
+    timesteps: Optional[int] = None
+    trained_at: Optional[str] = None
+    evaluation: Optional[Dict[str, Any]] = Field(default=None, description="Held-out evaluation recorded at training time")
+
+
+class ExperimentResultsResponse(BaseModel):
+    """Response for GET /api/experiments/results: the recorded research results."""
+    config: Dict[str, Any]
+    summary: List[Dict[str, Any]] = Field(description="Per-strategy IS statistics across seeds")
+    comparisons: List[Dict[str, Any]] = Field(description="Paired comparisons with confidence intervals")
+    hmm_validation: Dict[str, Optional[float]] = Field(default_factory=dict)
 
 
 class ExperimentSummaryResponse(BaseModel):
@@ -156,7 +188,10 @@ class ExperimentSummaryResponse(BaseModel):
     name: str
     scenarios: List[str]
     strategies: List[str]
-    status: str
+    status: str = Field(description="'completed' only when result files exist on disk, otherwise 'not_run'")
+    results_available: bool = False
+    seeds: Optional[List[int]] = None
+    train_timesteps: Optional[int] = None
 
 
 # ── Decision Explanation Schemas ────────────────────────────────────────────────
@@ -164,8 +199,9 @@ class ExperimentSummaryResponse(BaseModel):
 class DecisionExplanationRequest(BaseModel):
     """Payload for POST /api/execution/explain."""
     state: List[float] = Field(description="Observation state vector (7-dim standard or 12-dim regime-aware)")
-    action: int = Field(default=1, description="Selected action index (0, 1, 2, or 3)")
-    policy: str = Field(default="Regime-Aware DQN", description="Policy name")
+    action: Optional[int] = Field(default=None, ge=0, le=3,
+                                  description="Action to explain; defaults to the policy's own greedy action")
+    policy: str = Field(default="Regime-Aware DQN", description="Learned policy whose trained network is explained")
 
 
 class DecisionExplanationResponse(BaseModel):
