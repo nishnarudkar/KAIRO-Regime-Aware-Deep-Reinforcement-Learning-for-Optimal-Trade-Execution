@@ -73,6 +73,23 @@ in High Volatility and Stress regimes.
 
 ---
 
+## RQ4 — Is the regime-aware performance improvement specific to DQN, or does it generalise to a second RL algorithm class (PPO)?
+
+**Hypothesis:** If market-regime information is genuinely informative for optimal trade execution, adding HMM regime features will improve execution quality (lower IS) in on-policy policy-gradient models (PPO) as well as off-policy value iteration models (DQN).
+
+**Experiment (Stage 9 — Multi-Algorithm Comparison):**
+- Model A: Standard DQN (7-dim state)
+- Model B: Regime-Aware DQN (12-dim state)
+- Model C: Standard PPO (7-dim state)
+- Model D: Regime-Aware PPO (12-dim state)
+- Controls: Same data split, same action space, same reward, same net_arch (`[128, 128]`), same random seeds
+
+**Decision Rule:**
+- If Model D IS < Model C IS AND Model B IS < Model A IS → strong evidence that regime-awareness provides **algorithm-class-agnostic** value.
+- If Model B IS < Model A IS but Model D IS ≈ Model C IS → regime benefit is architecture-specific (tied to Q-value iteration).
+
+---
+
 ## Definitions
 
 | Term | Definition |

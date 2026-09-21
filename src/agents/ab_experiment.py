@@ -170,8 +170,10 @@ def run_ab_experiment(
 
     Returns dict with all result objects and MLflow run IDs.
     """
+    import os
     import mlflow
 
+    os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     mlflow.set_experiment(EXPERIMENT_NAME)
 

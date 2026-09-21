@@ -82,6 +82,7 @@ def evaluate_agent(
     agent_name: str = "DQN",
     deterministic: bool = True,
     n_episodes: int = 1,
+    env: Optional[Any] = None,
 ) -> AgentEvalResult:
     """
     Roll out a trained agent on evaluation market data and compute metrics.
@@ -100,18 +101,19 @@ def evaluate_agent(
         deterministic: Use greedy policy (no exploration).
         n_episodes: Number of rollout episodes to average over.
                     Use >1 with stochastic policies only.
+        env: Optional pre-constructed evaluation environment (e.g., RegimeAwareTradeExecutionEnv).
 
     Returns:
         AgentEvalResult with all execution metrics.
     """
-    from src.environment import TradeExecutionEnv
-
-    env = TradeExecutionEnv(
-        market_data=market_data,
-        target_inventory=target_inventory,
-        side=side,
-        horizon_steps=horizon_steps,
-    )
+    if env is None:
+        from src.environment import TradeExecutionEnv
+        env = TradeExecutionEnv(
+            market_data=market_data,
+            target_inventory=target_inventory,
+            side=side,
+            horizon_steps=horizon_steps,
+        )
 
     action_labels = {0: "0%", 1: "10%", 2: "25%", 3: "50%"}
 

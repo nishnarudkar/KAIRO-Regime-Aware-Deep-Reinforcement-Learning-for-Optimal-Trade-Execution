@@ -1,0 +1,66 @@
+# PPO Hyperparameter Configuration — Stage 9
+#
+# WHY PPO:
+#   PPO is an on-policy policy-gradient algorithm (Schulman et al., 2017).
+#   DQN is off-policy and value-based. Evaluating both allows us to determine
+#   whether regime-aware improvements are specific to DQN or generalise across
+#   RL algorithm classes (RQ4).
+#
+# DESIGN RULE:
+#   All hyperparameters are documented here explicitly.
+#   No silent changes. Changes must be logged in commit messages.
+#
+# COMPARABILITY:
+#   net_arch is kept identical to DQN ([128, 128]) to minimise confounds.
+#   gamma=0.99 matches DQN. Learning rate is higher (3e-4 vs 1e-4) — typical
+#   for PPO which performs full-gradient updates on collected rollouts.
+#
+# Reference: Schulman, J. et al. (2017). Proximal Policy Optimization Algorithms.
+#            arXiv:1707.06347
+
+policy: "MlpPolicy"
+
+# On-policy rollout buffer length.
+# Must be divisible by batch_size for efficient mini-batch construction.
+n_steps: 512
+
+# Mini-batch size per gradient update.
+# total_batch = n_steps, split into (n_steps / batch_size) mini-batches.
+batch_size: 64
+
+# Epochs over the collected rollout per update.
+n_epochs: 10
+
+# Adam optimizer learning rate.
+learning_rate: 0.0003
+
+# Discount factor (identical to DQN for fair comparison).
+gamma: 0.99
+
+# GAE lambda for advantage estimation (Generalized Advantage Estimation).
+# lambda=1.0 → Monte Carlo advantage. lambda=0.0 → TD advantage. 0.95 is standard.
+gae_lambda: 0.95
+
+# PPO clipping coefficient (epsilon in the surrogate objective).
+# Prevents overly large policy updates.
+clip_range: 0.2
+
+# Policy network architecture: two hidden layers of 128 units each.
+# Identical to DQN net_arch for a controlled algorithmic comparison.
+policy_kwargs:
+  net_arch:
+    - 128
+    - 128
+
+# Entropy coefficient for exploration encouragement.
+# 0.0 = no explicit entropy regularisation (PPO's clipping handles this).
+ent_coef: 0.0
+
+# Value function loss coefficient.
+vf_coef: 0.5
+
+# Maximum gradient norm for clipping.
+max_grad_norm: 0.5
+
+# Normalize advantage estimates for numerical stability.
+normalize_advantage: true

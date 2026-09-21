@@ -5,6 +5,7 @@ Public API
 ----------
 BaseAgentWrapper  – abstract interface all agents must implement
 DQNAgent          – Stage 6: DQN without regime information
+PPOAgent          – Stage 9: PPO without regime information
 DQNTrainer        – MLflow-tracked training orchestrator
 TrainingConfig    – fully serialisable training config dataclass
 evaluate_agent    – roll out a trained agent and return AgentEvalResult
@@ -33,6 +34,9 @@ def __getattr__(name):
     if name == "DQNAgent":
         from src.agents.dqn_agent import DQNAgent
         return DQNAgent
+    if name == "PPOAgent":
+        from src.agents.ppo_agent import PPOAgent
+        return PPOAgent
     if name == "DQNTrainer":
         from src.agents.trainer import DQNTrainer
         return DQNTrainer
@@ -45,4 +49,7 @@ def __getattr__(name):
     if name == "AgentEvalResult":
         from src.agents.evaluator import AgentEvalResult
         return AgentEvalResult
+    if name == "run_ppo_experiment":
+        from src.agents.ppo_experiment import run_ppo_experiment
+        return run_ppo_experiment
     raise AttributeError(f"module 'src.agents' has no attribute {name!r}")
