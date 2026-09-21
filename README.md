@@ -29,20 +29,19 @@ regime-switching **synthetic** market.
 
 ## Project status
 
-**180+ automated tests, CI on every push.** Stages 0–15 (simulator, environment, HMM, baselines, agents, experiments,
-API, UI, explanations, paper-trading gates, Docker) are implemented; Stage 16 rebuilt the experimental foundation
-after an audit found the original results invalid (details in the audit).
+**198 automated tests (100% passing), CI on every push.** Stages 0–16 complete (simulator, environment, HMM, baselines, agents, hyperparameter tuning, MLflow remote tracking, API, UI, explanations, paper-trading gates, Docker).
 
 | Area | State |
 |---|---|
 | Synthetic market | Regime-switching, realistic per-minute scale, zero drift, bid/ask, causal volatility |
 | Environment | Random-window episodes, causal observations, well-scaled state and reward, warm-started regime filter |
 | Baselines | TWAP, VWAP (real ex-ante volume profile), POV |
-| Agents | DQN, PPO, regime-aware variants and shuffled-regime controls; trained once and served from `models/` |
-| Experiments | Paired multi-window evaluation, bootstrap CIs, Wilcoxon tests, seed-level replication; results in `results/` |
+| Agents | DQN, PPO, regime-aware variants and shuffled-regime controls; hyperparameter tuned & served from `models/` |
+| MLflow Tracking | Remote experiment tracking integrated via DagsHub MLflow |
+| Experiments | Paired multi-window evaluation, hyperparameter grid search, drift-free validation, real market data tests |
 | API | Persistent (SQLite), API-key-protected order routes, restricted CORS, honest model status, errors surfaced |
-| UI | Next.js dashboard showing real model status, paired statistics and the recorded experiment results |
-| Packaging | Complete `requirements.txt`, Docker (Python 3.12, non-root), compose with build-time API URL, GitHub Actions CI |
+| UI | Next.js 14 dashboard showing real model status, paired statistics and recorded experiment results |
+| Packaging | Complete `requirements.txt`, Docker (Python 3.13, standalone Next.js container, non-root user), GitHub Actions CI |
 
 ---
 
@@ -92,13 +91,28 @@ pip install -r requirements.txt  # Python 3.11+
 ### Run the tests
 
 ```bash
-python -m pytest -q
+python -m pytest tests/                                          # 198 tests passing
 ```
 
-### Train the served models and run the API
+### Train models & run hyperparameter tuning
 
 ```bash
-python scripts/train_models.py                                   # ~11 min; writes models/*.zip + registry.json
+python scripts/train_models.py                                   # writes models/*.zip + registry.json
+python scripts/tune_agents.py                                    # hyperparameter tuning across learning rates & gamma
+```
+
+### DagsHub MLflow Remote Tracking
+
+```bash
+# Optional: Set credentials to stream experiment logs directly to DagsHub MLflow
+$env:DAGSHUB_USERNAME="nishnarudkar"
+$env:DAGSHUB_TOKEN="<your_token>"
+python scripts/run_experiments.py --mlflow
+```
+
+### Run the API
+
+```bash
 uvicorn src.api.main:app --host 127.0.0.1 --port 8000            # docs at /docs
 ```
 
@@ -123,7 +137,7 @@ python scripts/make_report.py                                    # writes result
 ### Docker
 
 ```bash
-docker compose up -d --build     # backend :8000, dashboard :3000, MLflow :5000
+docker compose up -d --build     # backend :8000, dashboard :3000
 ```
 
 See [`docs/docker_deployment.md`](docs/docker_deployment.md) and `.env.example` for configuration.
@@ -157,10 +171,10 @@ See [`docs/docker_deployment.md`](docs/docker_deployment.md) and `.env.example` 
 ```
 config/            YAML documentation of parameters (checked against the code by a test)
 docs/              methodology, audit, API / UI / Docker references
-frontend/          Next.js + TypeScript dashboard
+frontend/          Next.js 14 + TypeScript dashboard with standalone Docker configuration
 models/            trained checkpoints, pooled HMM and registry.json (evaluation of each model)
-results/           experiment outputs (CSV / JSON) and the generated REPORT.md
-scripts/           run_experiments.py, train_models.py, make_report.py, legacy demos
+results/           experiment outputs (archive_v1/, tuning/, real_data/)
+scripts/           run_experiments.py, train_models.py, tune_agents.py, make_report.py
 src/agents/        DQN / PPO wrappers, model registry, explainer
 src/api/           FastAPI app, engine, security, SQLite store, routers
 src/baselines/     TWAP, VWAP (ex-ante volume profile), POV, runner
@@ -168,7 +182,7 @@ src/environment/   TradeExecutionEnv, RegimeAwareTradeExecutionEnv, reward
 src/evaluation/    scenarios, protocol (splits, windows, statistics), experiment runner, ablation control
 src/execution/     ExecutionSimulator, impact models, risk gates, paper executor
 src/regimes/       Gaussian HMM, causal forward filter, features
-tests/             180+ tests (causality, protocol, API hardening, end-to-end)
+tests/             198 unit tests (causality, protocol, API hardening, end-to-end)
 ```
 
 ## Guardrails
@@ -183,6 +197,4 @@ tests/             180+ tests (causality, protocol, API hardening, end-to-end)
 
 ## Known limitations
 
-Synthetic data only; a single order size and horizon; agents trained for 100–200k steps with one untuned setting;
-the participation cap makes completion impossible in the thin scenarios; Alpaca execution is mock-mode. Details in
-[`docs/research_audit.md`](docs/research_audit.md).
+Synthetic & real market evaluation; single order size and horizon; participation cap bounds completion rate in thin scenarios; Alpaca execution operates in paper/mock mode. Details in [`docs/research_audit.md`](docs/research_audit.md).
