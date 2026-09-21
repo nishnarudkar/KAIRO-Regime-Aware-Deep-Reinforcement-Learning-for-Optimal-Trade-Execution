@@ -64,3 +64,19 @@ docker compose down
                     │ Container (Port 5000)   │
                     └─────────────────────────┘
 ```
+
+
+---
+
+## Configuration notes
+
+* **API URL for the browser.** `NEXT_PUBLIC_API_URL` is inlined into the client bundle **at build time** and is
+  called by the user's *browser*, so it must be reachable from the host (default `http://localhost:8000`), not the
+  compose service name `backend`. It is passed as a build argument:
+  `NEXT_PUBLIC_API_URL=http://my-host:8000 docker compose up -d --build`.
+* **CORS.** Set `KAIRO_CORS_ORIGINS` to the dashboard's public origin if it is not `http://localhost:3000`.
+* **Protected routes.** Set `KAIRO_API_KEY` to enable `/paper` and `/kill-switch`; they are refused without it.
+* **Models and results** are copied into the backend image from `models/` and `results/`. Run
+  `python scripts/train_models.py` and `python scripts/run_experiments.py` before building to refresh them.
+* **Persistence.** The SQLite execution store lives on the `kairo_data` volume (`/app/data/kairo.db`).
+* The backend image uses Python 3.12, CPU-only PyTorch and runs as a non-root user. See `.env.example` for all variables.

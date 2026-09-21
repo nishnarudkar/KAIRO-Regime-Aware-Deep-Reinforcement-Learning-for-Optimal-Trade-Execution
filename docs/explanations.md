@@ -33,51 +33,46 @@ In standard non-regime environments (7-dimensional state), $\text{RegimeInfluenc
 
 ---
 
-## 📊 API Endpoints
+## Feature and action definitions
 
-### 1. `POST /api/execution/explain`
-Compute feature attribution for an arbitrary state vector and action.
+The explainer's feature names and action meanings match the environments exactly.
 
-**Request**:
+| Index | Feature | Unit |
+|---|---|---|
+| 0 | `log_return` | percent |
+| 1 | `volatility` | percent (causal 20-bar realized) |
+| 2 | `volume_ratio` | bar volume / mean of the preceding history |
+| 3 | `spread_bps` | quoted spread in bps |
+| 4 | `liquidity` | ln(1 + volume / spread) − 13 |
+| 5 | `remaining_inventory` | fraction of the parent order |
+| 6 | `time_remaining` | fraction of the horizon |
+| 7 | `regime_id` | 0–3 (regime-aware policies only) |
+| 8–11 | `prob_low_vol`, `prob_normal`, `prob_high_vol`, `prob_stress` | causal HMM posterior |
+
+Actions: `0` wait, `1` execute 10% of remaining inventory, `2` 25%, `3` 50%.
+
+## What is explained
+
+Explanations are computed on the **trained policy network** loaded from disk (DQN Q-network or PPO policy logits).
+They are local, finite-difference sensitivities of that network: they describe what the network is responsive to at
+one state, not causal effects in the market. Baselines have no network and cannot be explained (`400`).
+
+## API
+
+### `POST /api/execution/explain`
+
 ```json
-{
-  "state": [1.0, 0.5, 0.001, 0.04, 0.0005, 1.0, 1.0, 2, 0.05, 0.1, 0.75, 0.1],
-  "action": 2,
-  "policy": "Regime-Aware DQN"
-}
+{ "policy": "Regime-Aware DQN", "state": [0.02, 0.05, 1.1, 1.4, 0.3, 0.8, 0.5, 1, 0.1, 0.7, 0.15, 0.05], "action": 2 }
 ```
 
-**Response**:
-```json
-{
-  "action": 2,
-  "action_label": "Accelerated (50% target rate)",
-  "feature_attributions": {
-    "remaining_inventory": 0.12,
-    "time_remaining": -0.05,
-    "volatility": 0.45,
-    "prob_high_vol": 0.82
-  },
-  "feature_percentages": {
-    "remaining_inventory": 14.5,
-    "volatility": 25.2,
-    "prob_high_vol": 42.8
-  },
-  "regime_influence_score": 52.4,
-  "action_scores": {"0": -0.1, "1": 0.2, "2": 0.85, "3": 0.4},
-  "action_advantages": {"0": -0.95, "1": -0.65, "2": 0.0, "3": -0.45},
-  "summary": "Policy selected 'Accelerated (50% target rate)'. Key driving factors: prob_high_vol (42.8%) and volatility (25.2%). Market regime features contributed 52.4% to this decision."
-}
-```
+`action` is optional; when omitted the policy's own greedy action is explained. The state must have the policy's
+dimension (7, or 12 for regime-aware) or the call returns `400`. A policy without a trained checkpoint returns `503`.
 
-### 2. `GET /api/execution/{id}/explain`
-Retrieve explanation summary for a completed simulation run by UUID.
+### `GET /api/execution/{id}/explain?step=N`
 
----
+Explains the decision the policy made at step *N* of a stored execution, using the observation it actually saw
+(recorded in the execution's trajectory).
 
-## 🔬 Unit Tests
-Comprehensive unit tests in `tests/test_explainer.py` verify:
-- Attribution score normalization ($\sum P_i = 100\%$)
-- Finite-difference sensitivity computation
-- Regime influence calculation for 7-dim vs 12-dim state vectors
-- Natural language explanation generation
+The response contains `action`, `action_label`, `feature_attributions` (signed), `feature_percentages`,
+`regime_influence_score` (share of attribution on regime features; 0 for non-regime policies), `action_scores`
+(Q-values or logits), `action_advantages` and a text `summary`.

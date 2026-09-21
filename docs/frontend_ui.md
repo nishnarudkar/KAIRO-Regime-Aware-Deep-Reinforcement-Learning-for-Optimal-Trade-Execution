@@ -1,54 +1,49 @@
-# Stage 11 — Next.js Product UI Documentation
+# Next.js Product UI
 
-## 1. Overview
+**KAIRO — Adaptive Execution Intelligence** is a Next.js + TypeScript dashboard for the FastAPI backend
+(`http://127.0.0.1:8000` by default; set `NEXT_PUBLIC_API_URL` at build time to change it).
 
-Stage 11 introduces **KAIRO — Adaptive Execution Intelligence**, a production-quality **Next.js + TypeScript** web application providing an institutional quantitative trading dashboard connected to the FastAPI backend service (`http://127.0.0.1:8000`).
-
----
-
-## 2. Main Screens & Features
-
-### 1. New Execution (`NewExecutionTab.tsx`)
-- Form to configure parent order parameters: Symbol (`AAPL`, `MSFT`, `NVDA`, `TSLA`, `GOOGL`, `AMZN`), Side (`BUY`/`SELL`), Target Quantity, Horizon Steps, Execution Policy (`TWAP`, `VWAP`, `POV`, `DQN`, `Regime-Aware DQN`, `PPO`, `Regime-Aware PPO`), Scenario (`normal`, `high_volatility`, `low_liquidity`, `stress`, `regime_transition`, `liquidity_shock`), and Seed.
-- Triggers `POST /api/execution/simulate` and automatically transitions to Execution Monitor upon completion.
-
-### 2. Execution Monitor (`ExecutionMonitorTab.tsx`)
-- Real-time execution progress card with progress bar (0–100%).
-- Current Price, Volatility, Spread, Remaining Inventory, Time Remaining, and Fill Rate.
-
-### 3. Execution Analytics (`ExecutionAnalyticsTab.tsx`)
-- Execution quality metric cards: Implementation Shortfall (IS bps & $), Market Impact Cost ($), Transaction Fees ($), Average Fill Price, Completion Rate (%), and VWAP Slippage (bps).
-- Interactive Recharts trajectory plots:
-  - **Inventory Decay Plot**: Remaining shares ($I_t$) over horizon steps.
-  - **Market Price Trajectory Plot**: Asset price movements over time.
-  - **Action Distribution Bar Chart**: Frequency of discrete inventory fill percentages (0%, 10%, 25%, 50%).
-
-### 4. Strategy Comparison (`StrategyComparisonTab.tsx`)
-- Runs multi-policy backtest via `POST /api/execution/backtest`.
-- Winner highlight box identifying top-performing policy.
-- Comparative Implementation Shortfall (IS bps) bar chart.
-- Benchmark results data table comparing baselines and DRL agents.
-
-### 5. Research & Regimes (`ResearchTab.tsx`)
-- Online market regime detection card via `GET /api/regime/current`.
-- Posterior probabilities distribution bar chart over the 4 canonical HMM regimes (Low Vol, Normal, High Vol, Stress).
-- Research Questions (RQ1–RQ4) summary overview.
+Design: a quiet, dense trading-desk look. Graphite surfaces, hairline rules, IBM Plex Sans with tabular Plex Mono
+figures, one accent colour; green / red / amber appear only where they carry meaning (buy/sell, fill, regime).
 
 ---
 
-## 3. Running the Frontend Locally
+## Screens
+
+### 1. Order Ticket (`NewExecutionTab.tsx`)
+Parent-order form (symbol, side, quantity, horizon 5–120 min, seed), a policy table and a scenario picker, with a live
+order summary rail. The policy table reads `/api/models`: learned policies without a trained checkpoint are disabled
+and labelled instead of being run.
+
+### 2. Monitor (`ExecutionMonitorTab.tsx`)
+Fill progress, unfilled shares and terminal penalty, implementation shortfall, average fill price, slippage vs VWAP,
+execution cost, and order / cost-component tables. Status is `completed` or `partial` as reported by the API.
+
+### 3. Analytics (`ExecutionAnalyticsTab.tsx`)
+Remaining-inventory and price trajectories, a per-step regime strip (regime-aware policies), and the action
+distribution (learned policies only).
+
+### 4. Comparison (`StrategyComparisonTab.tsx`)
+Runs all policies over 1–30 identical out-of-sample windows. Shows mean shortfall with a 95% CI, the paired difference
+vs TWAP with its CI (marked *n.s.* when the CI includes zero), cost and fill, and lists any policy that could not be
+evaluated together with the reason.
+
+### 5. Research (`ResearchTab.tsx`)
+The live causal-HMM regime detector (posterior probabilities, with the true regime of the synthetic market for
+reference) and the **recorded experiment results**: paired comparisons for RQ1–RQ3 with CI, p-value, seeds favouring
+the treatment and a plain-language reading, selectable by scenario scope. Nothing on this screen is a fixed claim;
+every verdict is computed from `results/`.
+
+---
+
+## Running
 
 ```bash
-# Navigate to frontend directory
 cd frontend
-
-# Run development server
-npm run dev
+npm install
+npm run dev            # http://localhost:3000
+npm run lint && npx tsc --noEmit && npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-Ensure the FastAPI backend server is running concurrently at `http://127.0.0.1:8000`:
-```bash
-uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
-```
+Start the backend first (`uvicorn src.api.main:app --port 8000`). Screens that need trained models rely on
+`python scripts/train_models.py` having been run.

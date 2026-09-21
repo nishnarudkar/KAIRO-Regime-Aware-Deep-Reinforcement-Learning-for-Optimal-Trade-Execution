@@ -13,3 +13,7 @@ mlruns
 frontend/.next
 frontend/node_modules
 *.log
+data/*.db
+results/run.log
+tests
+screenshots
