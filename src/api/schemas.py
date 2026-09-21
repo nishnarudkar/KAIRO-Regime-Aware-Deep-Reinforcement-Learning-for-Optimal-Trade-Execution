@@ -179,3 +179,42 @@ class DecisionExplanationResponse(BaseModel):
     action_advantages: Dict[int, float]
     summary: str
 
+
+# ── Paper Trading & Risk Gate Schemas ───────────────────────────────────────────
+
+class PaperOrderRequest(BaseModel):
+    """Payload for POST /api/execution/paper."""
+    symbol: str = Field(default="AAPL", description="Ticker symbol")
+    side: str = Field(default="BUY", description="Order side ('BUY' or 'SELL')")
+    quantity: float = Field(default=10_000.0, gt=0, description="Slice shares to execute")
+    current_price: float = Field(default=150.0, gt=0, description="Current market price ($)")
+    arrival_price: float = Field(default=150.0, gt=0, description="Decision arrival price ($)")
+    target_inventory: float = Field(default=100_000.0, gt=0, description="Total target order inventory")
+
+
+class PaperOrderResponse(BaseModel):
+    """Response payload for paper order submission."""
+    order_id: Optional[str]
+    status: str
+    mode: str = "paper_mock"
+    symbol: str
+    side: str
+    executed_quantity: float
+    fill_price: float
+    reason: str
+    timestamp: str
+
+
+class RiskStatusResponse(BaseModel):
+    """Response payload for GET /api/execution/risk-status."""
+    max_notional_value: float
+    max_single_order_pct: float
+    price_collar_pct: float
+    kill_switch_active: bool
+
+
+class SetKillSwitchRequest(BaseModel):
+    """Payload for POST /api/execution/kill-switch."""
+    active: bool = Field(description="Set to true to trigger emergency halt kill switch")
+
+

@@ -4,16 +4,21 @@ src/api/routers/execution.py — Execution Engine API Routes
 Endpoints:
   POST /api/execution/simulate   — Execute single simulation run
   POST /api/execution/backtest   — Run backtest comparison across strategies
+  POST /api/execution/paper      — Validate order against risk gates & execute paper slice
+  GET  /api/execution/risk-status — Query pre-trade risk gate parameters & kill switch status
+  POST /api/execution/kill-switch — Trigger / reset emergency halt kill switch
+  POST /api/execution/explain    — Compute post-hoc feature attributions & regime influence score
   GET  /api/execution/{id}       — Query execution record by ID
   GET  /api/execution/{id}/metrics     — Query execution metrics by ID
   GET  /api/execution/{id}/trajectory  — Query execution trajectory by ID
+  GET  /api/execution/{id}/explain     — Query decision explanation for completed run
 """
 
 from __future__ import annotations
 
 import datetime
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 from fastapi import APIRouter, HTTPException, Path, status
 import pandas as pd
@@ -29,11 +34,21 @@ from src.api.schemas import (
     BacktestResultItem,
     DecisionExplanationRequest,
     DecisionExplanationResponse,
+    PaperOrderRequest,
+    PaperOrderResponse,
+    RiskStatusResponse,
+    SetKillSwitchRequest,
 )
 from src.api.store import global_store
 from src.evaluation.scenarios import generate_scenario_data, SCENARIOS
+from src.execution.risk_gates import ExecutionRiskGate, RiskGateConfig
+from src.execution.alpaca_paper import AlpacaPaperExecutor
 
 router = APIRouter(prefix="/api/execution", tags=["Execution Engine"])
+
+# Global Risk Gate & Paper Executor Instances
+global_risk_gate = ExecutionRiskGate()
+global_paper_executor = AlpacaPaperExecutor(risk_gate=global_risk_gate, mock_mode=True)
 
 
 # ── Helper Execution Engine Functions ──────────────────────────────────────────
@@ -136,7 +151,6 @@ def _run_rl_simulation(
             horizon_steps=horizon_steps,
         )
 
-    # Instantiate agent & short train for fast API response
     if is_ppo:
         agent = PPOAgent(env=train_env, seed=seed, n_steps=256, batch_size=32, verbose=0)
         agent.train(total_timesteps=512)
@@ -157,15 +171,11 @@ def _run_rl_simulation(
     return result, eval_env
 
 
-# ── Route Handlers ─────────────────────────────────────────────────────────────
+# ── Static Routes (MUST be defined before /{id} parameter routes) ────────────────
 
 @router.post("/simulate", response_model=ExecutionResponse, status_code=status.HTTP_200_OK)
 def simulate_execution(req: ExecutionSimulateRequest):
-    """
-    Run a single execution simulation for the requested policy and scenario.
-
-    Returns the complete execution response and stores the record in memory.
-    """
+    """Run a single execution simulation for the requested policy and scenario."""
     if req.scenario not in SCENARIOS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -209,7 +219,6 @@ def simulate_execution(req: ExecutionSimulateRequest):
             detail=f"Unsupported policy '{req.policy}'. Valid options: {list(baselines | rl_policies)}",
         )
 
-    # Format action counts string keys
     str_act_counts = {str(k): int(v) for k, v in act_counts.items()}
 
     metrics_dto = ExecutionMetricsResponse(
@@ -254,9 +263,7 @@ def simulate_execution(req: ExecutionSimulateRequest):
 
 @router.post("/backtest", response_model=BacktestResponse, status_code=status.HTTP_200_OK)
 def run_backtest(req: BacktestRequest):
-    """
-    Run backtest comparison across multiple baseline and DRL policies.
-    """
+    """Run backtest comparison across multiple baseline and DRL policies."""
     if req.scenario not in SCENARIOS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -301,7 +308,7 @@ def run_backtest(req: BacktestRequest):
                     vwap_slippage_bps=float(res.vwap_slippage_bps),
                 )
             )
-        except Exception as e:
+        except Exception:
             continue
 
     return BacktestResponse(
@@ -314,6 +321,93 @@ def run_backtest(req: BacktestRequest):
         results=results_items,
     )
 
+
+@router.post("/paper", response_model=PaperOrderResponse, status_code=status.HTTP_200_OK)
+def submit_paper_order(req: PaperOrderRequest):
+    """Validate order against pre-trade risk gates and route to Alpaca Paper Trading execution engine."""
+    result = global_paper_executor.execute_slice(
+        symbol=req.symbol,
+        side=req.side,
+        quantity=req.quantity,
+        current_price=req.current_price,
+        arrival_price=req.arrival_price,
+        target_inventory=req.target_inventory,
+    )
+
+    return PaperOrderResponse(
+        order_id=result.get("order_id"),
+        status=result["status"],
+        mode=result.get("mode", "paper_mock"),
+        symbol=req.symbol,
+        side=req.side,
+        executed_quantity=result["executed_quantity"],
+        fill_price=result["fill_price"],
+        reason=result["reason"],
+        timestamp=result["timestamp"],
+    )
+
+
+@router.get("/risk-status", response_model=RiskStatusResponse)
+def get_risk_status():
+    """Query active pre-trade risk gate configuration limits and emergency kill switch status."""
+    st = global_risk_gate.get_status()
+    return RiskStatusResponse(
+        max_notional_value=st["max_notional_value"],
+        max_single_order_pct=st["max_single_order_pct"],
+        price_collar_pct=st["price_collar_pct"],
+        kill_switch_active=st["kill_switch_active"],
+    )
+
+
+@router.post("/kill-switch", response_model=RiskStatusResponse)
+def set_kill_switch(req: SetKillSwitchRequest):
+    """Trigger or reset emergency kill switch to immediately halt paper execution."""
+    global_risk_gate.set_kill_switch(req.active)
+    return get_risk_status()
+
+
+@router.post("/explain", response_model=DecisionExplanationResponse)
+def explain_action_decision(req: DecisionExplanationRequest):
+    """Compute post-hoc feature attributions and regime influence score for a given observation state and action."""
+    from src.agents.explainer import DecisionExplainer
+
+    explainer = DecisionExplainer()
+    state_arr = np.array(req.state, dtype=np.float32)
+
+    def dummy_agent_eval(s):
+        res = np.ones(4, dtype=np.float32) * 0.25
+        if len(s) >= 4:
+            res[1] += s[0] * 0.1
+            res[2] += s[3] * 0.2
+        if len(s) >= 12:
+            res[3] += s[11] * 0.3
+        return res
+
+    class ProxyAgent:
+        def predict(self, s):
+            return int(np.argmax(dummy_agent_eval(s)))
+        def get_q_values(self, s):
+            return dummy_agent_eval(s)
+
+    result = explainer.explain_step(
+        agent=ProxyAgent(),
+        state=state_arr,
+        action=req.action,
+    )
+
+    return DecisionExplanationResponse(
+        action=result["action"],
+        action_label=result["action_label"],
+        feature_attributions=result["feature_attributions"],
+        feature_percentages=result["feature_percentages"],
+        regime_influence_score=result["regime_influence_score"],
+        action_scores=result["action_scores"],
+        action_advantages=result["action_advantages"],
+        summary=result["summary"],
+    )
+
+
+# ── Dynamic Parameter Routes (MUST be defined after static routes) ──────────────
 
 @router.get("/{id}", response_model=ExecutionResponse)
 def get_execution_record(id: str = Path(..., description="Execution UUID string")):
@@ -351,56 +445,9 @@ def get_execution_trajectory(id: str = Path(..., description="Execution UUID str
     return trajectory
 
 
-@router.post("/explain", response_model=DecisionExplanationResponse)
-def explain_action_decision(req: DecisionExplanationRequest):
-    """
-    Compute post-hoc feature attributions and regime influence score for a given observation state and action.
-    """
-    from src.agents.explainer import DecisionExplainer
-
-    explainer = DecisionExplainer()
-    state_arr = np.array(req.state, dtype=np.float32)
-
-    # Dummy agent evaluator callback
-    def dummy_agent_eval(s):
-        # Q-values proxy based on state parameters
-        res = np.ones(4, dtype=np.float32) * 0.25
-        if len(s) >= 4:
-            res[1] += s[0] * 0.1  # inventory
-            res[2] += s[3] * 0.2  # volatility
-        if len(s) >= 12:
-            res[3] += s[11] * 0.3  # stress probability
-        return res
-
-    class ProxyAgent:
-        def predict(self, s):
-            return int(np.argmax(dummy_agent_eval(s)))
-        def get_q_values(self, s):
-            return dummy_agent_eval(s)
-
-    result = explainer.explain_step(
-        agent=ProxyAgent(),
-        state=state_arr,
-        action=req.action,
-    )
-
-    return DecisionExplanationResponse(
-        action=result["action"],
-        action_label=result["action_label"],
-        feature_attributions=result["feature_attributions"],
-        feature_percentages=result["feature_percentages"],
-        regime_influence_score=result["regime_influence_score"],
-        action_scores=result["action_scores"],
-        action_advantages=result["action_advantages"],
-        summary=result["summary"],
-    )
-
-
 @router.get("/{id}/explain", response_model=DecisionExplanationResponse)
 def get_execution_explanation(id: str = Path(..., description="Execution UUID string")):
-    """
-    Retrieve feature attribution explanation for a completed execution run.
-    """
+    """Retrieve feature attribution explanation for a completed execution run."""
     record = global_store.get_execution(id)
     if not record:
         raise HTTPException(
@@ -408,12 +455,11 @@ def get_execution_explanation(id: str = Path(..., description="Execution UUID st
             detail=f"Execution ID '{id}' not found.",
         )
 
-    # Construct representative state vector for record policy
     use_regime = "Regime" in record.policy or "Regime-Aware" in record.policy
     dim = 12 if use_regime else 7
     sample_state = [1.0, 0.5, 0.001, 0.02, 0.0005, 1.0, 1.0]
     if use_regime:
-        sample_state += [2.0, 0.1, 0.2, 0.6, 0.1]  # High vol regime bias
+        sample_state += [2.0, 0.1, 0.2, 0.6, 0.1]
 
     req = DecisionExplanationRequest(
         state=sample_state,
@@ -421,4 +467,3 @@ def get_execution_explanation(id: str = Path(..., description="Execution UUID st
         policy=record.policy,
     )
     return explain_action_decision(req)
-
