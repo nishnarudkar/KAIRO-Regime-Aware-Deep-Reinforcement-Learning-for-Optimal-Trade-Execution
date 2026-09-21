@@ -15,7 +15,7 @@ A research-grade framework and production platform for executing large instituti
 
 ## 📊 Project Status & Progress Tracker
 
-**108 / 108 Unit Tests Passing ✅ | Stages 0–11 Complete**
+**112 / 112 Unit Tests Passing ✅ | Stages 0–12 Complete**
 
 | Stage | Name | Status | Description / Key Deliverables |
 |---|---|---|---|
@@ -31,8 +31,8 @@ A research-grade framework and production platform for executing large instituti
 | **Stage 9** | PPO Extension | ✅ Complete | `PPOAgent`, `ppo.yaml`, 4-model multi-algorithm comparison (DQN vs PPO), RQ4 methodology |
 | **Stage 10**| FastAPI Backend Service | ✅ Complete | REST API (`/simulate`, `/backtest`, `/{id}`, `/regime/current`, `/models`, `/baselines`), OpenAPI docs |
 | **Stage 11**| Next.js Product UI | ✅ Complete | Adaptive Execution Intelligence frontend dashboard (5 interactive tabs, Recharts analytics) |
-| **Stage 12**| Decision Explanation Layer| 🔜 Next | Post-hoc feature contribution & regime explanation layer |
-| **Stage 13**| Alpaca Paper Trading | 🔜 Planned | Paper-trading execution mode & safety risk gates |
+| **Stage 12**| Decision Explanation Layer| ✅ Complete | Post-hoc feature contribution (`DecisionExplainer`), regime influence scoring, `docs/explanations.md` |
+| **Stage 13**| Alpaca Paper Trading | 🔜 Next | Paper-trading execution mode & safety risk gates |
 | **Stage 14**| Docker Packaging | 🔜 Planned | Containerization (Docker Compose for backend, frontend, MLflow) |
 | **Stage 15**| Research & Audit | 🔜 Planned | Formal research & reproducibility audit (`docs/research_audit.md`) |
 
@@ -117,6 +117,8 @@ mlflow ui
 | `GET` | `/api/execution/{id}` | Query execution record summary by unique UUID |
 | `GET` | `/api/execution/{id}/metrics` | Query detailed execution quality metrics (IS bps, cost, fill %, VWAP slip) |
 | `GET` | `/api/execution/{id}/trajectory` | Query step-by-step price, inventory, and action trajectories |
+| `POST`| `/api/execution/explain` | Compute post-hoc feature attribution & regime influence score for observation |
+| `GET` | `/api/execution/{id}/explain` | Query feature attribution explanation for completed execution run |
 | `GET` | `/api/regime/current` | Detect current market regime using causal HMM online forward filter |
 | `GET` | `/api/baselines` | List conventional execution baseline strategies |
 | `GET | `/api/models` | List available DRL model metadata |

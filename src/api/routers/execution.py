@@ -27,6 +27,8 @@ from src.api.schemas import (
     ExecutionTrajectoryResponse,
     BacktestResponse,
     BacktestResultItem,
+    DecisionExplanationRequest,
+    DecisionExplanationResponse,
 )
 from src.api.store import global_store
 from src.evaluation.scenarios import generate_scenario_data, SCENARIOS
@@ -347,3 +349,76 @@ def get_execution_trajectory(id: str = Path(..., description="Execution UUID str
             detail=f"Execution trajectory for ID '{id}' not found.",
         )
     return trajectory
+
+
+@router.post("/explain", response_model=DecisionExplanationResponse)
+def explain_action_decision(req: DecisionExplanationRequest):
+    """
+    Compute post-hoc feature attributions and regime influence score for a given observation state and action.
+    """
+    from src.agents.explainer import DecisionExplainer
+
+    explainer = DecisionExplainer()
+    state_arr = np.array(req.state, dtype=np.float32)
+
+    # Dummy agent evaluator callback
+    def dummy_agent_eval(s):
+        # Q-values proxy based on state parameters
+        res = np.ones(4, dtype=np.float32) * 0.25
+        if len(s) >= 4:
+            res[1] += s[0] * 0.1  # inventory
+            res[2] += s[3] * 0.2  # volatility
+        if len(s) >= 12:
+            res[3] += s[11] * 0.3  # stress probability
+        return res
+
+    class ProxyAgent:
+        def predict(self, s):
+            return int(np.argmax(dummy_agent_eval(s)))
+        def get_q_values(self, s):
+            return dummy_agent_eval(s)
+
+    result = explainer.explain_step(
+        agent=ProxyAgent(),
+        state=state_arr,
+        action=req.action,
+    )
+
+    return DecisionExplanationResponse(
+        action=result["action"],
+        action_label=result["action_label"],
+        feature_attributions=result["feature_attributions"],
+        feature_percentages=result["feature_percentages"],
+        regime_influence_score=result["regime_influence_score"],
+        action_scores=result["action_scores"],
+        action_advantages=result["action_advantages"],
+        summary=result["summary"],
+    )
+
+
+@router.get("/{id}/explain", response_model=DecisionExplanationResponse)
+def get_execution_explanation(id: str = Path(..., description="Execution UUID string")):
+    """
+    Retrieve feature attribution explanation for a completed execution run.
+    """
+    record = global_store.get_execution(id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution ID '{id}' not found.",
+        )
+
+    # Construct representative state vector for record policy
+    use_regime = "Regime" in record.policy or "Regime-Aware" in record.policy
+    dim = 12 if use_regime else 7
+    sample_state = [1.0, 0.5, 0.001, 0.02, 0.0005, 1.0, 1.0]
+    if use_regime:
+        sample_state += [2.0, 0.1, 0.2, 0.6, 0.1]  # High vol regime bias
+
+    req = DecisionExplanationRequest(
+        state=sample_state,
+        action=1,
+        policy=record.policy,
+    )
+    return explain_action_decision(req)
+

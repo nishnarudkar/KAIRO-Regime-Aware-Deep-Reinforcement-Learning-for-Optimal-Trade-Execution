@@ -157,3 +157,25 @@ class ExperimentSummaryResponse(BaseModel):
     scenarios: List[str]
     strategies: List[str]
     status: str
+
+
+# ── Decision Explanation Schemas ────────────────────────────────────────────────
+
+class DecisionExplanationRequest(BaseModel):
+    """Payload for POST /api/execution/explain."""
+    state: List[float] = Field(description="Observation state vector (7-dim standard or 12-dim regime-aware)")
+    action: int = Field(default=1, description="Selected action index (0, 1, 2, or 3)")
+    policy: str = Field(default="Regime-Aware DQN", description="Policy name")
+
+
+class DecisionExplanationResponse(BaseModel):
+    """Response payload for decision explanation endpoint."""
+    action: int
+    action_label: str
+    feature_attributions: Dict[str, float]
+    feature_percentages: Dict[str, float]
+    regime_influence_score: float
+    action_scores: Dict[int, float]
+    action_advantages: Dict[int, float]
+    summary: str
+

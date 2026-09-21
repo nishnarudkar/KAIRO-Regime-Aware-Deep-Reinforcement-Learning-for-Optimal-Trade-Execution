@@ -52,4 +52,7 @@ def __getattr__(name):
     if name == "run_ppo_experiment":
         from src.agents.ppo_experiment import run_ppo_experiment
         return run_ppo_experiment
+    if name == "DecisionExplainer":
+        from src.agents.explainer import DecisionExplainer
+        return DecisionExplainer
     raise AttributeError(f"module 'src.agents' has no attribute {name!r}")
