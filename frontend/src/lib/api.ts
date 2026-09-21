@@ -1,6 +1,6 @@
 /**
  * KAIRO FastAPI Backend Client
- * Connects to http://127.0.0.1:8000
+ * The base URL is inlined at build time from NEXT_PUBLIC_API_URL and is used by the browser.
  */
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
@@ -20,6 +20,7 @@ export interface BacktestRequest {
   side: string;
   quantity: number;
   horizon_steps: number;
+  n_windows: number;
   policies: string[];
   scenario: string;
   seed: number;
@@ -45,7 +46,8 @@ export interface ExecutionTrajectory {
   inventory_trajectory: number[];
   action_trajectory: number[];
   price_trajectory: number[];
-  regime_trajectory?: number[];
+  regime_trajectory?: number[] | null;
+  window_start?: number | null;
 }
 
 export interface ExecutionRecord {
@@ -65,9 +67,21 @@ export interface ExecutionRecord {
 export interface BacktestResultItem {
   policy: string;
   implementation_shortfall_bps: number;
+  implementation_shortfall_bps_std: number;
+  ci_low: number;
+  ci_high: number;
+  vs_twap_bps: number | null;
+  vs_twap_ci_low: number | null;
+  vs_twap_ci_high: number | null;
   execution_cost: number;
   completion_rate: number;
   vwap_slippage_bps: number;
+  n_windows: number;
+}
+
+export interface BacktestError {
+  policy: string;
+  detail: string;
 }
 
 export interface BacktestResponse {
@@ -77,7 +91,9 @@ export interface BacktestResponse {
   side: string;
   quantity: number;
   scenario: string;
+  n_windows: number;
   results: BacktestResultItem[];
+  errors: BacktestError[];
 }
 
 export interface CurrentRegimeResponse {
@@ -89,13 +105,22 @@ export interface CurrentRegimeResponse {
   regime_id: number;
   regime_label: string;
   regime_probabilities: Record<string, number>;
+  true_regime?: string | null;
 }
 
 export interface BaselineStrategyResponse {
   strategy_id: string;
   name: string;
   description: string;
-  parameters: Record<string, any>;
+  parameters: Record<string, unknown>;
+}
+
+export interface PairedStat {
+  mean: number;
+  ci_low: number | null;
+  ci_high: number | null;
+  p_value: number | null;
+  win_rate: number | null;
 }
 
 export interface ModelMetadataResponse {
@@ -104,8 +129,17 @@ export interface ModelMetadataResponse {
   algorithm_class: string;
   regime_aware: boolean;
   status: string;
+  trained: boolean;
   state_dim: number;
   net_arch: number[];
+  timesteps: number | null;
+  trained_at: string | null;
+  evaluation: {
+    is_bps_mean: number;
+    fill_rate_mean: number;
+    n_windows: number;
+    vs_twap_bps?: PairedStat;
+  } | null;
 }
 
 export interface ExperimentSummaryResponse {
@@ -114,76 +148,111 @@ export interface ExperimentSummaryResponse {
   scenarios: string[];
   strategies: string[];
   status: string;
+  results_available: boolean;
+  seeds: number[] | null;
+  train_timesteps: number | null;
+}
+
+export interface ComparisonRow {
+  rq: string;
+  treatment: string;
+  control: string;
+  scope: string;
+  level: 'window' | 'seed';
+  n: number;
+  mean: number;
+  ci_low: number | null;
+  ci_high: number | null;
+  p_value: number | null;
+  win_rate: number | null;
+  n_seeds: number | null;
+  seed_std: number | null;
+  seeds_favouring: number | null;
+}
+
+export interface SummaryRow {
+  strategy: string;
+  mean: number;
+  std: number | null;
+  min: number;
+  max: number;
+  n_runs: number;
+}
+
+export interface ExperimentResults {
+  config: {
+    seeds?: number[];
+    scenarios?: string[];
+    train_timesteps?: number;
+    n_bars?: number;
+    horizon_steps?: number;
+  };
+  summary: SummaryRow[];
+  comparisons: ComparisonRow[];
+  hmm_validation: { mean_ari?: number | null; mean_accuracy?: number | null; n_runs?: number };
+}
+
+/** Extract a readable message from a FastAPI error body. */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    const detail = body?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail.length) {
+      return detail.map((d: { loc?: unknown[]; msg?: string }) => `${(d.loc ?? []).slice(1).join('.')}: ${d.msg}`).join('; ');
+    }
+  } catch {
+    /* fall through */
+  }
+  return fallback;
+}
+
+async function postJson<T>(path: string, payload: unknown, fallback: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, fallback));
+  return (await res.json()) as T;
+}
+
+async function getJson<T>(path: string, fallback: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(await errorMessage(res, fallback));
+  return (await res.json()) as T;
 }
 
 export async function checkBackendHealth(): Promise<{ status: string; service: string }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/health`, { cache: 'no-store' });
-    if (!res.ok) throw new Error('Healthcheck failed');
-    return await res.json();
-  } catch (err) {
+    return await getJson('/health', 'Healthcheck failed');
+  } catch {
     throw new Error('Backend offline');
   }
 }
 
-export async function simulateExecution(payload: ExecutionSimulateRequest): Promise<ExecutionRecord> {
-  const res = await fetch(`${API_BASE_URL}/api/execution/simulate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: 'Simulation request failed' }));
-    throw new Error(errorData.detail || 'Simulation request failed');
-  }
-  return await res.json();
-}
+export const simulateExecution = (payload: ExecutionSimulateRequest) =>
+  postJson<ExecutionRecord>('/api/execution/simulate', payload, 'Simulation request failed');
 
-export async function runBacktest(payload: BacktestRequest): Promise<BacktestResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/execution/backtest`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: 'Backtest request failed' }));
-    throw new Error(errorData.detail || 'Backtest request failed');
-  }
-  return await res.json();
-}
+export const runBacktest = (payload: BacktestRequest) =>
+  postJson<BacktestResponse>('/api/execution/backtest', payload, 'Backtest request failed');
 
-export async function getExecutionRecord(id: string): Promise<ExecutionRecord> {
-  const res = await fetch(`${API_BASE_URL}/api/execution/${id}`);
-  if (!res.ok) throw new Error(`Execution ${id} not found`);
-  return await res.json();
-}
+export const getExecutionRecord = (id: string) =>
+  getJson<ExecutionRecord>(`/api/execution/${id}`, `Execution ${id} not found`);
 
-export async function getExecutionTrajectory(id: string): Promise<ExecutionTrajectory> {
-  const res = await fetch(`${API_BASE_URL}/api/execution/${id}/trajectory`);
-  if (!res.ok) throw new Error(`Trajectory for ${id} not found`);
-  return await res.json();
-}
+export const getExecutionTrajectory = (id: string) =>
+  getJson<ExecutionTrajectory>(`/api/execution/${id}/trajectory`, `Trajectory for ${id} not found`);
 
-export async function getCurrentRegime(symbol = 'AAPL', scenario = 'normal'): Promise<CurrentRegimeResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/regime/current?symbol=${symbol}&scenario=${scenario}`);
-  if (!res.ok) throw new Error('Regime detection request failed');
-  return await res.json();
-}
+export const getCurrentRegime = (symbol = 'AAPL', scenario = 'normal', seed = 42) =>
+  getJson<CurrentRegimeResponse>(
+    `/api/regime/current?symbol=${encodeURIComponent(symbol)}&scenario=${encodeURIComponent(scenario)}&seed=${seed}`,
+    'Regime detection request failed',
+  );
 
-export async function getBaselines(): Promise<BaselineStrategyResponse[]> {
-  const res = await fetch(`${API_BASE_URL}/api/baselines`);
-  if (!res.ok) throw new Error('Failed to fetch baselines');
-  return await res.json();
-}
+export const getBaselines = () => getJson<BaselineStrategyResponse[]>('/api/baselines', 'Failed to fetch baselines');
 
-export async function getModels(): Promise<ModelMetadataResponse[]> {
-  const res = await fetch(`${API_BASE_URL}/api/models`);
-  if (!res.ok) throw new Error('Failed to fetch models');
-  return await res.json();
-}
+export const getModels = () => getJson<ModelMetadataResponse[]>('/api/models', 'Failed to fetch models');
 
-export async function getExperiments(): Promise<ExperimentSummaryResponse[]> {
-  const res = await fetch(`${API_BASE_URL}/api/experiments`);
-  if (!res.ok) throw new Error('Failed to fetch experiments');
-  return await res.json();
-}
+export const getExperiments = () => getJson<ExperimentSummaryResponse[]>('/api/experiments', 'Failed to fetch experiments');
+
+export const getExperimentResults = () => getJson<ExperimentResults>('/api/experiments/results', 'No experiment results');

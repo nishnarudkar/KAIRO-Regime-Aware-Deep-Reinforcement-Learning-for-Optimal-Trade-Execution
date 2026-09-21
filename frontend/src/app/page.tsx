@@ -71,7 +71,7 @@ export default function Home() {
 
       <footer className="border-t border-line">
         <div className="max-w-[1200px] mx-auto px-5 sm:px-8 py-4 flex flex-wrap justify-between gap-2 text-[12px] text-ink-3">
-          <span>Regime-aware deep reinforcement learning for optimal trade execution</span>
+          <span>Synthetic market data · simulated fills · regime-aware deep RL for trade execution</span>
           <span className="num">{API_BASE_URL}</span>
         </div>
       </footer>

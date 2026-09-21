@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { simulateExecution, ExecutionRecord } from '../lib/api';
+import React, { useEffect, useState } from 'react';
+import { simulateExecution, getModels, ExecutionRecord, ModelMetadataResponse } from '../lib/api';
 import { Panel, PanelHeader, PageTitle, KeyValueTable, fmtInt } from './ui';
 
 interface NewExecutionTabProps {
@@ -27,6 +27,13 @@ const SCENARIOS = [
   { id: 'liquidity_shock', name: 'Liquidity shock', desc: 'Order book liquidity collapses suddenly' },
 ];
 
+const MODEL_ID_TO_POLICY: Record<string, string> = {
+  dqn_base: 'DQN',
+  dqn_regime: 'Regime-Aware DQN',
+  ppo_base: 'PPO',
+  ppo_regime: 'Regime-Aware PPO',
+};
+
 const SYMBOLS = [
   ['AAPL', 'Apple'],
   ['MSFT', 'Microsoft'],
@@ -46,9 +53,28 @@ export function NewExecutionTab({ onExecutionCreated }: NewExecutionTabProps) {
   const [seed, setSeed] = useState(42);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelMetadataResponse[] | null>(null);
+
+  useEffect(() => {
+    getModels()
+      .then(setModels)
+      .catch(() => setModels([]));
+  }, []);
+
+  // policy name -> trained? (unknown until the model list has loaded)
+  const trainedByPolicy: Record<string, boolean> = {};
+  (models ?? []).forEach((m) => {
+    trainedByPolicy[MODEL_ID_TO_POLICY[m.model_id]] = m.trained;
+  });
+  const isUnavailable = (id: string) =>
+    POLICIES.find((p) => p.id === id)?.group === 'RL agent' && models !== null && trainedByPolicy[id] === false;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUnavailable(policy)) {
+      setError(`'${policy}' has no trained checkpoint. Run scripts/train_models.py or pick another policy.`);
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -150,7 +176,10 @@ export function NewExecutionTab({ onExecutionCreated }: NewExecutionTabProps) {
           </Panel>
 
           <Panel>
-            <PanelHeader title="Execution policy" note="Baselines are rule-based. RL agents are trained policies; regime-aware variants observe 5 extra HMM features." />
+            <PanelHeader
+              title="Execution policy"
+              note="Baselines are rule-based. RL agents are trained offline and loaded from disk; regime-aware variants observe 5 extra HMM features."
+            />
             <div role="radiogroup" aria-label="Execution policy">
               <div className="hidden sm:grid grid-cols-[1fr_88px_72px] px-5 py-2 border-b border-line label">
                 <span>Policy</span>
@@ -159,21 +188,26 @@ export function NewExecutionTab({ onExecutionCreated }: NewExecutionTabProps) {
               </div>
               {POLICIES.map((p) => {
                 const on = policy === p.id;
+                const unavailable = isUnavailable(p.id);
                 return (
                   <button
                     key={p.id}
                     type="button"
                     role="radio"
                     aria-checked={on}
+                    disabled={unavailable}
                     onClick={() => setPolicy(p.id)}
                     className={`w-full text-left grid grid-cols-1 sm:grid-cols-[1fr_88px_72px] items-baseline gap-x-4 px-5 py-3 border-b border-line last:border-b-0 relative transition-colors ${
-                      on ? 'bg-raised' : 'hover:bg-raised/50'
+                      unavailable ? 'opacity-45 cursor-not-allowed' : on ? 'bg-raised' : 'hover:bg-raised/50'
                     }`}
                   >
                     {on && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent" />}
                     <span>
                       <span className={`block text-[13.5px] ${on ? 'text-ink font-medium' : 'text-ink'}`}>{p.name}</span>
-                      <span className="block text-[12.5px] text-ink-3">{p.desc}</span>
+                      <span className="block text-[12.5px] text-ink-3">
+                        {p.desc}
+                        {unavailable && ' · not trained (run scripts/train_models.py)'}
+                      </span>
                     </span>
                     <span className="text-[12.5px] text-ink-2 hidden sm:block">{p.group}</span>
                     <span className="num text-[12.5px] text-ink-2 text-right hidden sm:block">{p.state}</span>

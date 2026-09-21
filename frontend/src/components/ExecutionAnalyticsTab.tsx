@@ -38,18 +38,23 @@ interface ExecutionAnalyticsTabProps {
 const REGIME_NAMES = ['Low Volatility', 'Normal', 'High Volatility', 'Stress'];
 
 export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: ExecutionAnalyticsTabProps) {
-  const [trajectory, setTrajectory] = useState<ExecutionTrajectory | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Keyed by execution id, so "loading" is derived instead of set synchronously in the effect.
+  const [loaded, setLoaded] = useState<{ id: string; data: ExecutionTrajectory | null } | null>(null);
+  const executionId = executionRecord?.execution_id ?? null;
 
   useEffect(() => {
-    if (executionRecord?.execution_id) {
-      setLoading(true);
-      getExecutionTrajectory(executionRecord.execution_id)
-        .then(setTrajectory)
-        .catch(() => setTrajectory(null))
-        .finally(() => setLoading(false));
-    }
-  }, [executionRecord]);
+    if (!executionId) return;
+    let cancelled = false;
+    getExecutionTrajectory(executionId)
+      .then((data) => !cancelled && setLoaded({ id: executionId, data }))
+      .catch(() => !cancelled && setLoaded({ id: executionId, data: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [executionId]);
+
+  const loading = executionId !== null && loaded?.id !== executionId;
+  const trajectory = loaded?.id === executionId ? loaded?.data ?? null : null;
 
   if (!executionRecord) {
     return (
@@ -78,6 +83,7 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
 
   const regimes = trajectory?.regime_trajectory ?? [];
 
+  const hasActions = Object.values(metrics.action_counts).some((c) => c > 0);
   const actionDistributionData = [
     { name: '0%', count: metrics.action_counts['0'] || 0 },
     { name: '10%', count: metrics.action_counts['1'] || 0 },
@@ -185,20 +191,22 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
         </Panel>
       </div>
 
-      <Panel>
-        <PanelHeader title="Action distribution" note="How often the policy chose each fraction of remaining inventory" />
-        <div className="h-56 p-4 pl-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={actionDistributionData} margin={chartMargin}>
-              <CartesianGrid stroke={GRID_STROKE} vertical={false} />
-              <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
-              <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
-              <Tooltip cursor={{ fill: '#16181a' }} content={<ChartTooltip labelPrefix="Fill " format={(v) => `${v} steps`} />} />
-              <Bar dataKey="count" fill="#7d9bb8" radius={[1, 1, 0, 0]} maxBarSize={56} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Panel>
+      {hasActions && (
+        <Panel>
+          <PanelHeader title="Action distribution" note="How often the policy chose each fraction of remaining inventory" />
+          <div className="h-56 p-4 pl-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={actionDistributionData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+                <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
+                <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
+                <Tooltip cursor={{ fill: '#16181a' }} content={<ChartTooltip labelPrefix="Fill " format={(v) => `${v} steps`} />} />
+                <Bar dataKey="count" fill="#7d9bb8" radius={[1, 1, 0, 0]} maxBarSize={56} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
