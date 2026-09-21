@@ -217,10 +217,10 @@ class ResultsAggregator:
         def _get(name: str) -> float:
             return float(means.get(name, float("nan")))
 
-        best_baseline = min(
-            _get("TWAP"), _get("VWAP"), _get("POV")
-        )
-        dqn    = _get("DQN (no regime)")
+        best_baseline = float(np.nanmin([_get("TWAP"), _get("VWAP"), _get("POV")]))
+        dqn    = _get("DQN")
+        if np.isnan(dqn):
+            dqn = _get("DQN (no regime)")   # legacy name
         ra_dqn = _get("Regime-Aware DQN")
 
         return {
