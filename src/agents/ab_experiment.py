@@ -122,9 +122,9 @@ def _eval_baseline(strategy_name: str, market_data: pd.DataFrame):
     from src.baselines.runner import BaselineRunner
 
     strategies = {
-        "TWAP": TWAPStrategy(),
-        "VWAP": VWAPStrategy(),
-        "POV":  POVStrategy(participation_rate=0.10),
+        "TWAP": TWAPStrategy(target_inventory=TARGET_INVENTORY, total_steps=HORIZON_STEPS),
+        "VWAP": VWAPStrategy(target_inventory=TARGET_INVENTORY, total_steps=HORIZON_STEPS),
+        "POV":  POVStrategy(target_inventory=TARGET_INVENTORY, target_rate=0.10),
     }
     runner = BaselineRunner()
     return runner.run(

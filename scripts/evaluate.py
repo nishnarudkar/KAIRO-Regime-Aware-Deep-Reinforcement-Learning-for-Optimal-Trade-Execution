@@ -109,7 +109,7 @@ def main():
     from src.baselines.runner import BaselineRunner
 
     runner = BaselineRunner()
-    for strategy in [TWAPStrategy(), VWAPStrategy(), POVStrategy(participation_rate=0.10)]:
+    for strategy in [TWAPStrategy(target_inventory=args.inventory, total_steps=args.horizon), VWAPStrategy(target_inventory=args.inventory, total_steps=args.horizon), POVStrategy(target_inventory=args.inventory, target_rate=0.10)]:
         result = runner.run(
             strategy=strategy,
             market_data=market_data,
