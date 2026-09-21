@@ -1,0 +1,44 @@
+# DQN Agent — Stage 6 Hyperparameters
+# All values are explicitly documented so no silent changes can occur.
+#
+# IMPORTANT: To change any value, update this file AND note the change
+# in your MLflow run parameters. Never hardcode values in source files.
+
+dqn:
+  # Policy network
+  policy_type: "MlpPolicy"
+  net_arch: [128, 128]          # two hidden layers of 128 units each
+
+  # Optimisation
+  learning_rate: 1.0e-4         # Adam LR; standard DQN starting point
+  gamma: 0.99                   # discount factor
+  batch_size: 64
+  tau: 1.0                      # hard target-network copy (tau=1)
+
+  # Replay buffer
+  buffer_size: 50_000
+  learning_starts: 1_000        # warm-up steps before first gradient update
+
+  # Training frequency
+  train_freq: 4                 # update every 4 env steps
+  gradient_steps: 1
+
+  # Target network
+  target_update_interval: 1_000 # steps between hard target-network updates
+
+  # Exploration (epsilon-greedy)
+  exploration_fraction: 0.3     # 30% of total timesteps used for eps decay
+  exploration_initial_eps: 1.0
+  exploration_final_eps: 0.05
+
+  # Training run
+  total_timesteps: 100_000
+  seed: 42
+  verbose: 1
+
+  # Checkpointing
+  model_dir: "models"
+  model_filename: "dqn_no_regime"
+
+  # MLflow
+  experiment_name: "dqn_no_regime"

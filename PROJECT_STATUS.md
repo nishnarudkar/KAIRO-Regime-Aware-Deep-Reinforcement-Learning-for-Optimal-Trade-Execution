@@ -10,8 +10,12 @@
 | **Phase 4: Gymnasium Execution MDP** | **COMPLETED** | `TradeExecutionEnv` Gymnasium environment, discrete action space, multi-term modular reward function. |
 | **Phase 5: Baseline Strategies** | **COMPLETED** | Standardized TWAP, VWAP, and POV execution strategies for benchmark comparison. |
 | **Phase 6: Regime Detection Engine** | **COMPLETED** | 4-State Gaussian HMM with canonical state reordering, online forward filtering (zero lookahead), and evaluation plots. |
-| **Phase 7: DRL Agent Integration** | **IN PROGRESS** | Stable-Baselines3 integration, regime feature routing, policy network tuning (PPO/SAC/DQN). |
-| **Phase 8: Backtest & Evaluation** | **PLANNED** | Implementation Shortfall backtest suite, regime metric breakdowns, visual analytics dashboard. |
+| **Phase 7: DRL Agent — Stage 6 (DQN, no regime)** | **IN PROGRESS** | `src/agents/dqn_agent.py`, `src/agents/trainer.py`, `src/agents/evaluator.py`, `scripts/train.py`, `scripts/evaluate.py`, `config/dqn.yaml`, `tests/test_dqn_agent.py`. SB3 DQN with MLflow tracking, save/load, full evaluation suite. Awaiting test run. |
+| **Phase 8: Regime-Aware DQN (Stage 7)** | **PLANNED** | `RegimeAwareTradeExecutionEnv`, Model A vs B A/B experiment, `docs/research_questions.md`. |
+| **Phase 9: Research Experiment Suite (Stage 8)** | **PLANNED** | Ablation studies, shuffled-regime control, experiment runner, CI tables. |
+| **Phase 10: FastAPI Backend (Stage 10)** | **PLANNED** | Full REST API for simulation, backtest, regime, model endpoints. |
+| **Phase 11: Next.js Product UI (Stage 11)** | **PLANNED** | 5-screen frontend: New Execution, Monitor, Analytics, Comparison, Research. |
+| **Phase 12: Docker + Audit (Stages 14–15)** | **PLANNED** | Dockerization, research reproducibility audit. |
 
 ---
 
