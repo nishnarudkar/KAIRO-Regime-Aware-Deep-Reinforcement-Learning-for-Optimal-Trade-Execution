@@ -15,7 +15,7 @@ A research-grade framework and production platform for executing large instituti
 
 ## 📊 Project Status & Progress Tracker
 
-**108 / 108 Unit Tests Passing ✅ | Stages 0–10 Complete**
+**108 / 108 Unit Tests Passing ✅ | Stages 0–11 Complete**
 
 | Stage | Name | Status | Description / Key Deliverables |
 |---|---|---|---|
@@ -30,8 +30,8 @@ A research-grade framework and production platform for executing large instituti
 | **Stage 8** | Research Experiment Suite | ✅ Complete | 6 synthetic scenarios, 3 random seeds, shuffled-regime control ablation, `ResultsAggregator` |
 | **Stage 9** | PPO Extension | ✅ Complete | `PPOAgent`, `ppo.yaml`, 4-model multi-algorithm comparison (DQN vs PPO), RQ4 methodology |
 | **Stage 10**| FastAPI Backend Service | ✅ Complete | REST API (`/simulate`, `/backtest`, `/{id}`, `/regime/current`, `/models`, `/baselines`), OpenAPI docs |
-| **Stage 11**| Next.js Product UI | 🔜 Next | Adaptive Execution Intelligence frontend dashboard |
-| **Stage 12**| Decision Explanation Layer| 🔜 Planned | Post-hoc feature contribution & regime explanation layer |
+| **Stage 11**| Next.js Product UI | ✅ Complete | Adaptive Execution Intelligence frontend dashboard (5 interactive tabs, Recharts analytics) |
+| **Stage 12**| Decision Explanation Layer| 🔜 Next | Post-hoc feature contribution & regime explanation layer |
 | **Stage 13**| Alpaca Paper Trading | 🔜 Planned | Paper-trading execution mode & safety risk gates |
 | **Stage 14**| Docker Packaging | 🔜 Planned | Containerization (Docker Compose for backend, frontend, MLflow) |
 | **Stage 15**| Research & Audit | 🔜 Planned | Formal research & reproducibility audit (`docs/research_audit.md`) |
@@ -161,7 +161,12 @@ regime-aware-trade-execution/
 │   ├── experiments.md        # Stage 8 research experiment design
 │   ├── ppo_extension.md      # Stage 9 PPO extension & RQ4 analysis
 │   ├── fastapi_backend.md    # Stage 10 FastAPI backend reference
+│   ├── frontend_ui.md        # Stage 11 Next.js frontend UI documentation
 │   └── research_questions.md # Formal research questions (RQ1–RQ4)
+├── frontend/                 # Next.js 14 TypeScript Product UI
+│   ├── src/app/              # App router pages & tab components
+│   ├── src/components/       # UI layout & tabs
+│   └── src/lib/api.ts        # Typed API client for FastAPI backend
 ├── scripts/                  # Executable CLI scripts
 │   ├── run_experiments.py    # Full research suite runner
 │   ├── run_ppo_experiment.py # 4-model PPO comparison runner
