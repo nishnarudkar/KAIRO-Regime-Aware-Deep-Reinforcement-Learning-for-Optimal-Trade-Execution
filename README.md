@@ -38,7 +38,21 @@ A research-grade framework and production platform for executing large instituti
 
 ---
 
-## 🏗 Architecture Overview
+## 🖼️ UI Dashboard Screenshots
+
+The Next.js 14 + TypeScript Product UI provides interactive trade execution intelligence across 5 core views:
+
+| View | Screenshot | Key Features |
+|---|---|---|
+| **1. New Execution** | ![New Execution](screenshots/01_new_execution.png) | Order parameters, strategy cards (TWAP, VWAP, POV, DQN, Regime-Aware DQN/PPO), scenario selector |
+| **2. Execution Monitor** | ![Execution Monitor](screenshots/02_execution_monitor.png) | Real-time fill %, remaining inventory, implementation shortfall, average fill price & VWAP slippage |
+| **3. Execution Analytics** | ![Execution Analytics](screenshots/03_execution_analytics.png) | Inventory decay trajectory, market price curve, fill size distribution, and fee breakdowns |
+| **4. Strategy Comparison** | ![Strategy Comparison](screenshots/04_strategy_comparison.png) | Multi-policy backtest benchmark, top strategy highlight, IS bar chart, and results pivot table |
+| **5. Research & Regimes** | ![Research & Regimes](screenshots/05_research_regimes.png) | Real-time Causal HMM regime detector, 4-regime posterior probabilities, and research question details |
+
+---
+
+## 🏗️ Architecture Overview
 
 ```mermaid
 flowchart TD
