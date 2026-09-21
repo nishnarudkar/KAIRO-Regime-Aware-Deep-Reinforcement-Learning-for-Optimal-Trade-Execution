@@ -5,7 +5,7 @@ Class: TradeExecutionEnv
 Wraps ExecutionSimulator with standard Gymnasium interfaces (reset, step, action_space, observation_space).
 """
 
-from typing import Dict, Any, Optional, Tuple, List, Union
+from typing import Dict, Any, Optional, Tuple, List, Sequence, Union
 import numpy as np
 import pandas as pd
 import gymnasium as gym
@@ -14,24 +14,31 @@ from gymnasium import spaces
 from src.execution import (
     ExecutionSimulator,
     BaseImpactModel,
-    AlmgrenChrissImpactModel,
+    default_impact_model,
     StepResult
 )
-from src.environment.rewards import ModularExecutionReward
+from src.environment.rewards import ModularExecutionReward, default_reward_calculator
 
 
 class TradeExecutionEnv(gym.Env):
     """
     Gymnasium Trade Execution MDP Environment.
     
-    Observation Space: Box(7,)
-      0: log_return
-      1: volatility
-      2: volume_ratio (volume / rolling_mean_volume)
-      3: spread_ratio (spread / price)
-      4: liquidity_proxy (volume / (spread + eps))
+    Observation Space: Box(7,)  (fixed unit conversions, no data-dependent scaling)
+      0: log_return            one-bar log return, in percent
+      1: volatility            causal realized volatility, in percent
+      2: volume_ratio          bar volume / mean volume of the preceding history
+      3: spread_ratio          quoted spread / price, in basis points
+      4: liquidity_proxy       ln(1 + volume / spread) - 13   (roughly centred)
       5: remaining_inventory_fraction (q_t / Q_0)
       6: time_remaining_fraction ((T - t) / T)
+
+    Episode windows:
+      By default an episode replays bars [0, horizon) of the data. With
+      ``random_start=True`` each episode starts at a random bar inside
+      ``start_range`` (in a random dataset when ``market_data`` is a list), so
+      agents see many different market paths. Bars before the start are
+      available as *history* only, never the future.
 
     Action Space: Discrete(4)
       0: execute 0.00 (0% of remaining inventory)
@@ -44,7 +51,7 @@ class TradeExecutionEnv(gym.Env):
 
     def __init__(
         self,
-        market_data: Optional[pd.DataFrame] = None,
+        market_data: Optional[Union[pd.DataFrame, Sequence[pd.DataFrame]]] = None,
         target_inventory: float = 100000.0,
         side: str = "BUY",
         horizon_steps: int = 30,
@@ -54,6 +61,9 @@ class TradeExecutionEnv(gym.Env):
         max_participation_rate: float = 0.15,
         per_share_fee: float = 0.0005,
         default_spread_bps: float = 2.0,
+        random_start: bool = False,
+        start_range: Optional[Tuple[int, int]] = None,
+        history_bars: int = 60,
     ):
         super().__init__()
 
@@ -75,7 +85,7 @@ class TradeExecutionEnv(gym.Env):
         )
 
         # Instantiate Impact Model and Simulator
-        self.impact_model = impact_model if impact_model is not None else AlmgrenChrissImpactModel(eta=0.05, gamma=0.01)
+        self.impact_model = impact_model if impact_model is not None else default_impact_model()
         self.simulator = ExecutionSimulator(
             impact_model=self.impact_model,
             max_participation_rate=max_participation_rate,
@@ -84,12 +94,24 @@ class TradeExecutionEnv(gym.Env):
         )
 
         # Reward calculator
-        self.reward_calculator = reward_calculator if reward_calculator is not None else ModularExecutionReward()
+        self.reward_calculator = reward_calculator if reward_calculator is not None else default_reward_calculator()
 
-        # Market data store
+        # Market data store (a single DataFrame or a list of them)
         self.market_data = market_data
+        if isinstance(market_data, (list, tuple)):
+            self._datasets: List[pd.DataFrame] = list(market_data)
+        elif market_data is not None:
+            self._datasets = [market_data]
+        else:
+            self._datasets = []
+        self.random_start = random_start
+        self.start_range = start_range
+        self.history_bars = int(history_bars)
+
         self._prev_price: float = 0.0
         self._mean_volume: float = 1.0
+        self.window_start: int = 0
+        self.dataset_idx: int = 0
 
     def reset(
         self,
@@ -109,33 +131,68 @@ class TradeExecutionEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Extract market data from options if passed, or default
-        df = None
-        if options and "market_data" in options:
-            df = options["market_data"]
-        elif self.market_data is not None:
-            df = self.market_data
-        else:
-            # Fallback synthetic deterministic market data if none provided
-            df = self._generate_fallback_data()
+        df, start = self._resolve_episode(options)
+        self.window_start = start
+        window = df.iloc[start:start + self.horizon_steps]
 
         target_inv = options.get("target_inventory", self.target_inventory) if options else self.target_inventory
 
-        # Reset simulator
+        # Reset simulator on the episode window
         sim_state = self.simulator.reset(
-            market_data=df,
+            market_data=window,
             target_inventory=target_inv,
             side=self.side,
             horizon_steps=self.horizon_steps
         )
 
-        self._prev_price = sim_state["current_price"]
-        self._mean_volume = float(df['volume'].mean()) if 'volume' in df.columns and len(df) > 0 else 10000.0
+        # Causal reference quantities: only bars *before* the window start are used.
+        history = df.iloc[max(0, start - self.history_bars):start]
+        if len(history) >= 5 and "volume" in history.columns:
+            self._mean_volume = float(history["volume"].mean())
+        else:
+            self._mean_volume = float(window["volume"].iloc[0]) if len(window) > 0 else 10000.0
+        if len(history) > 0:
+            price_col = "price" if "price" in history.columns else "close"
+            self._prev_price = float(history[price_col].iloc[-1])
+        else:
+            self._prev_price = sim_state["current_price"]
 
         obs = self._get_observation(sim_state)
         info = self._get_info(sim_state)
 
         return obs, info
+
+    def _resolve_episode(self, options: Optional[Dict[str, Any]]) -> Tuple[pd.DataFrame, int]:
+        """Pick the dataset and the window start for the next episode."""
+        options = options or {}
+        if "market_data" in options:
+            datasets = [options["market_data"]]
+        elif self._datasets:
+            datasets = self._datasets
+        else:
+            datasets = [self._generate_fallback_data()]
+
+        if "dataset_idx" in options:
+            ds_idx = int(options["dataset_idx"])
+        elif len(datasets) > 1:
+            ds_idx = int(self.np_random.integers(len(datasets)))
+        else:
+            ds_idx = 0
+        self.dataset_idx = ds_idx
+        df = datasets[ds_idx]
+
+        max_start = max(0, len(df) - self.horizon_steps)
+        if "start_idx" in options:
+            start = int(options["start_idx"])
+        elif self.random_start:
+            lo, hi = self.start_range if self.start_range else (0, max_start)
+            lo, hi = max(0, lo), min(max_start, hi)
+            start = int(self.np_random.integers(lo, hi + 1)) if hi >= lo else 0
+        elif self.start_range:
+            start = self.start_range[0]
+        else:
+            start = 0
+        return df, min(max(start, 0), max_start)
 
     def step(self, action: Union[int, np.integer]) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
@@ -190,22 +247,22 @@ class TradeExecutionEnv(gym.Env):
         current_price = sim_state["current_price"]
         prev_price = self._prev_price if self._prev_price > 0 else current_price
 
-        # 0. Log return
-        log_return = np.log(current_price / prev_price) if prev_price > 0 else 0.0
+        # 0. Log return (percent)
+        log_return = 100.0 * np.log(current_price / prev_price) if prev_price > 0 else 0.0
 
-        # 1. Volatility
-        volatility = sim_state["volatility"]
+        # 1. Volatility (percent)
+        volatility = 100.0 * sim_state["volatility"]
 
         # 2. Relative Volume
         volume = sim_state["volume"]
         volume_ratio = volume / self._mean_volume if self._mean_volume > 0 else 1.0
 
-        # 3. Relative Spread
+        # 3. Relative Spread (basis points)
         spread = sim_state["spread"]
-        spread_ratio = spread / current_price if current_price > 0 else 0.0002
+        spread_ratio = 1e4 * spread / current_price if current_price > 0 else 2.0
 
-        # 4. Liquidity Proxy
-        liquidity_proxy = volume / (spread + 1e-6)
+        # 4. Liquidity Proxy (log scale, roughly centred)
+        liquidity_proxy = np.log1p(volume / (spread + 1e-6)) - 13.0
 
         # 5. Remaining Inventory Fraction
         remaining_frac = sim_state["remaining_inventory"] / sim_state["target_inventory"]

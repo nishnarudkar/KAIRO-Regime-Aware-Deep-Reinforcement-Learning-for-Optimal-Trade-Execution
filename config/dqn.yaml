@@ -1,6 +1,8 @@
 # DQN Agent — Stage 6 Hyperparameters
 # All values are explicitly documented so no silent changes can occur.
 #
+# NOTE: the code constants in src/evaluation/protocol.py are the source of truth; this file documents
+# them and tests/test_config_consistency.py fails if they differ.
 # IMPORTANT: To change any value, update this file AND note the change
 # in your MLflow run parameters. Never hardcode values in source files.
 
@@ -10,13 +12,13 @@ dqn:
   net_arch: [128, 128]          # two hidden layers of 128 units each
 
   # Optimisation
-  learning_rate: 1.0e-4         # Adam LR; standard DQN starting point
+  learning_rate: 3.0e-4         # Adam LR (matches src/evaluation/protocol.py::DQN_HPARAMS)
   gamma: 0.99                   # discount factor
   batch_size: 64
   tau: 1.0                      # hard target-network copy (tau=1)
 
   # Replay buffer
-  buffer_size: 50_000
+  buffer_size: 100_000
   learning_starts: 1_000        # warm-up steps before first gradient update
 
   # Training frequency

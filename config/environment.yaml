@@ -1,3 +1,4 @@
+# NOTE: values are checked against the code defaults by tests/test_config_consistency.py
 environment:
   max_steps: 30
   time_horizon_seconds: 1800
@@ -8,8 +9,8 @@ environment:
 
 impact_model:
   type: "almgren_chriss"
-  eta: 0.05      # Temporary impact parameter
-  gamma: 0.01    # Permanent impact parameter
+  eta: 0.5       # Temporary impact (square-root law: eta * sigma_bar * sqrt(q/V) * P)
+  gamma: 0.001   # Permanent impact (linear in participation)
   alpha: 0.5     # Power law exponent for volume fraction
 
 reward:
@@ -18,3 +19,4 @@ reward:
   lambda_risk: 1.0e-4
   lambda_fee: 1.0
   lambda_terminal: 10.0
+  reward_scale: 10000.0   # reward expressed in bps of parent-order notional

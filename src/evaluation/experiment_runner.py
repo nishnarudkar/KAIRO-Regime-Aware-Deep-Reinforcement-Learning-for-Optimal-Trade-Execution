@@ -1,337 +1,277 @@
 """
 src/evaluation/experiment_runner.py — Full Research Experiment Suite
 
-Orchestrates the complete Stage 8 experiment:
+For every (scenario, seed):
 
-  For each scenario in [normal, high_volatility, low_liquidity, stress,
-                        regime_transition, liquidity_shock]:
-    For each seed in seeds:
-      1. Generate synthetic market data (scenario-specific parameters)
-      2. Chronological split: 70% train | 30% test
-      3. Fit HMM on train split ONLY
-      4. Evaluate TWAP, VWAP, POV on test data
-      5. Train Model A (DQN, no regime) on train data, evaluate on test
-      6. Train Model B (Regime-Aware DQN) on train data, evaluate on test
-      7. Train Model C (Shuffled regime control) on train data, evaluate on test
-      8. Collect all results into ResultsAggregator
+  1. Generate a long regime-switching synthetic series (see scenarios.py).
+  2. Chronological split: first 70% train | last 30% test.
+  3. Fit the HMM on the train split only.
+  4. Evaluate TWAP, VWAP and POV on every non-overlapping test window.
+  5. Train each learned model on random train windows and evaluate it on the
+     *same* test windows:
+        DQN, Regime-Aware DQN, DQN (shuffled-regime control),
+        PPO, Regime-Aware PPO, PPO (shuffled-regime control)
+  6. Validate the causal HMM against the true latent regime path.
 
-Output:
-  - results/experiment_results.csv    (raw records)
-  - results/experiment_results.parquet
-  - results/summary_table.csv         (mean/std per strategy)
-  - results/comparison_table.csv      (wide format, all metrics)
-  - results/per_scenario_table.csv    (strategy × scenario pivot)
-  - results/rq_summary.json          (RQ1 / RQ2 / RQ3 delta answers)
+Because every strategy sees identical windows, all comparisons are paired.
 
-All results written as-is. No post-hoc selection or modification.
+Outputs (written to ``results_dir``, never post-processed by hand):
+  window_results.csv        one row per (scenario, seed, strategy, window)
+  experiment_results.csv    per (scenario, seed, strategy) means over windows
+  summary_table.csv         mean / std of IS per strategy
+  comparison_table.csv      wide table of mean metrics per strategy
+  per_scenario_table.csv    strategy x scenario pivot of mean IS
+  paired_comparisons.csv    paired differences with bootstrap CI and Wilcoxon p
+  hmm_validation.csv        causal HMM agreement with the true regime
+  rq_summary.json           headline deltas
+  run_config.json           exact configuration of the run
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
-from src.evaluation.scenarios import generate_scenario_data, SCENARIOS
+from src.evaluation import protocol as P
 from src.evaluation.metrics import ResultsAggregator, SingleRunRecord
+from src.evaluation.scenarios import SCENARIOS, generate_scenario_data
 
 logger = logging.getLogger(__name__)
 
-
-# ── Defaults ───────────────────────────────────────────────────────────────────
-
 DEFAULT_SCENARIOS = list(SCENARIOS.keys())
-DEFAULT_SEEDS     = [42, 123, 777]    # 3 seeds for variability estimate
-HORIZON_STEPS     = 30
-TARGET_INVENTORY  = 100_000.0
-SIDE              = "BUY"
-RESULTS_DIR       = "results"
+DEFAULT_SEEDS = [42, 123, 777, 2024, 31415]
+RESULTS_DIR = "results"
+
+# Comparisons reported in paired_comparisons.csv: (rq, treatment, control)
+COMPARISONS: List[Tuple[str, str, str]] = (
+    [("RQ1", m, b) for m in (P.NAME_DQN, P.NAME_PPO) for b in P.BASELINE_NAMES]
+    + [("RQ1", m, b) for m in (P.NAME_RA_DQN, P.NAME_RA_PPO) for b in P.BASELINE_NAMES]
+    + [("RQ2", P.NAME_RA_DQN, P.NAME_DQN), ("RQ2", P.NAME_RA_PPO, P.NAME_PPO)]
+    + [("RQ3-control", P.NAME_RA_DQN, P.NAME_SH_DQN), ("RQ3-control", P.NAME_RA_PPO, P.NAME_SH_PPO)]
+)
+TRANSITION_SCENARIOS = ["regime_transition", "stress", "high_volatility", "liquidity_shock"]
 
 
-# ── Private helpers ────────────────────────────────────────────────────────────
+# ── One (scenario, seed) job ──────────────────────────────────────────────────
 
-def _split(df: pd.DataFrame, ratio: float = 0.70):
-    """Chronological train/test split. NEVER shuffle."""
-    n = len(df)
-    cut = int(n * ratio)
-    return df.iloc[:cut].reset_index(drop=True), df.iloc[cut:].reset_index(drop=True)
-
-
-def _fit_hmm(train_df: pd.DataFrame):
-    from src.regimes.hmm_model import MarketHMM
-    from src.regimes.features import RegimeFeatureEngine, RegimeFeatureScaler
-
-    engine = RegimeFeatureEngine()
-    feat_df = engine.compute_features(train_df)
-    _, X = engine.extract_feature_matrix(feat_df, drop_na=True)
-    if len(X) < 10:
-        return None  # not enough data to fit HMM for very small datasets
-
-    scaler = RegimeFeatureScaler(method="robust")
-    hmm = MarketHMM(n_regimes=4, random_state=42)
+def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Run baselines and learned models for one (scenario, seed). Picklable, self-contained."""
     try:
-        hmm.fit(X, scaler=scaler)
-        return hmm
-    except Exception as e:
-        logger.warning(f"HMM fitting failed: {e}")
-        return None
+        import torch
+        torch.set_num_threads(1)
+    except Exception:  # pragma: no cover
+        pass
+
+    scenario, seed = job["scenario"], job["seed"]
+    timesteps = job["timesteps"]
+    t0 = time.time()
+
+    df = generate_scenario_data(scenario, n_steps=job["n_bars"], seed=seed)
+    split = P.make_split(df)
+    starts = P.test_window_starts(split, max_windows=job.get("max_windows"))
+
+    frames = [P.evaluate_baseline_windows(split.full, starts)]
+    hmm = P.fit_hmm([split.train])
+    hmm_row: Dict[str, Any] = {"scenario": scenario, "seed": seed}
+
+    if hmm is None:
+        logger.warning("HMM fit failed for %s/%s; skipping learned models", scenario, seed)
+    else:
+        hmm_row.update(_validate_hmm(hmm, split))
+        names = [n for n in P.LEARNED_SPECS
+                 if (job["run_ablation"] or "shuffled" not in n) and (job["include_ppo"] or "PPO" not in n)]
+        for name in names:
+            algo, kind = P.LEARNED_SPECS[name]
+            try:
+                agent = P.train_agent(algo, kind, [split.train], hmm, seed=seed,
+                                      timesteps=timesteps, cut=split.cut)
+                env = P.build_env(kind, [split.full], hmm, shuffle_seed=seed + 5000)
+                frames.append(P.evaluate_agent_windows(agent, env, starts, name, seed=seed))
+            except Exception as exc:
+                logger.error("%s failed for %s/%s: %s", name, scenario, seed, exc)
+
+    win = pd.concat(frames, ignore_index=True)
+    win.insert(0, "seed", seed)
+    win.insert(0, "scenario", scenario)
+    return {"windows": win, "hmm": hmm_row, "seconds": time.time() - t0}
 
 
-def _compute_regime_features(df: pd.DataFrame) -> pd.DataFrame:
-    from src.regimes.features import RegimeFeatureEngine
-    engine = RegimeFeatureEngine()
-    return engine.compute_features(df)
+def _validate_hmm(hmm, split: P.SeriesSplit) -> Dict[str, float]:
+    """Agreement between the causal filter and the true latent regime on the test region."""
+    from sklearn.metrics import adjusted_rand_score
+    from src.regimes.inference import CausalRegimeInference
+
+    feats = P.compute_regime_features(split.full)
+    cols = hmm.feature_names
+    mask = feats[cols].notna().all(axis=1).to_numpy()
+    X = feats.loc[mask, cols].to_numpy()
+    truth = split.full["true_regime"].to_numpy()[mask]
+    inf = CausalRegimeInference(hmm)
+    inf.reset_online_state()
+    pred = np.array([inf.step_online(x)[0] for x in X])
+    test_mask = np.arange(len(pred)) >= (split.cut - int((~mask).sum()))
+    return {
+        "test_ari": float(adjusted_rand_score(truth[test_mask], pred[test_mask])),
+        "test_accuracy": float(np.mean(truth[test_mask] == pred[test_mask])),
+    }
 
 
-def _eval_baselines(test_data: pd.DataFrame) -> List[Any]:
-    from src.baselines import TWAPStrategy, VWAPStrategy, POVStrategy
-    from src.baselines.runner import BaselineRunner
+# ── Aggregation ───────────────────────────────────────────────────────────────
 
-    runner = BaselineRunner()
-    results = []
-    for strategy in [
-        TWAPStrategy(target_inventory=TARGET_INVENTORY, total_steps=HORIZON_STEPS),
-        VWAPStrategy(target_inventory=TARGET_INVENTORY, total_steps=HORIZON_STEPS),
-        POVStrategy(target_inventory=TARGET_INVENTORY, target_rate=0.10),
-    ]:
-        r = runner.run(
-            strategy=strategy,
-            market_data=test_data,
-            target_inventory=TARGET_INVENTORY,
-            side=SIDE,
-            horizon_steps=HORIZON_STEPS,
-        )
-        results.append(r)
-    return results
-
-
-
-def _train_and_eval_model_a(train_data, test_data, seed: int, timesteps: int, verbose: int):
-    """Model A: DQN without regime."""
-    from src.environment import TradeExecutionEnv
-    from src.agents.dqn_agent import DQNAgent
-    from src.agents.evaluator import evaluate_agent
-
-    env = TradeExecutionEnv(
-        market_data=train_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-    )
-    agent = DQNAgent(env=env, seed=seed, verbose=verbose, learning_starts=min(200, timesteps // 5))
-    agent.train(total_timesteps=timesteps)
-
-    return evaluate_agent(
-        agent=agent,
-        market_data=test_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-        seed=seed,
-        agent_name="DQN (no regime)",
-    )
+def _records_from_windows(win: pd.DataFrame) -> List[SingleRunRecord]:
+    recs = []
+    for (scen, seed, strat), g in win.groupby(["scenario", "seed", "strategy"], sort=False):
+        m = g.mean(numeric_only=True)
+        recs.append(SingleRunRecord(
+            strategy_name=strat, scenario=scen, seed=int(seed),
+            implementation_shortfall_bps=float(m["implementation_shortfall_bps"]),
+            execution_cost=float(m["total_execution_cost"]),
+            market_impact_cost=float(m["total_impact_cost"]),
+            total_transaction_fees=float(m["total_transaction_fees"]),
+            completion_rate=float(min(1.0, m["fill_rate"])),
+            average_execution_price=float(m["average_execution_price"]),
+            arrival_price=float(m["arrival_price"]),
+            vwap_slippage_bps=float(m["vwap_slippage_bps"]),
+            terminal_penalty=float(m["terminal_penalty"]),
+            turnover=float((g["executed_inventory"] * g["average_execution_price"]).mean()),
+        ))
+    return recs
 
 
-def _train_and_eval_model_b(train_data, test_data, hmm_model, seed: int, timesteps: int, verbose: int):
-    """Model B: Regime-Aware DQN."""
-    from src.environment import RegimeAwareTradeExecutionEnv
-    from src.agents.dqn_agent import DQNAgent
-    from src.agents.evaluator import evaluate_agent
+def paired_comparisons(win: pd.DataFrame, n_boot: int = 4000) -> pd.DataFrame:
+    """
+    Paired differences (treatment - control, IS bps; negative = treatment cheaper).
 
-    train_regime_feat = _compute_regime_features(train_data)
-    env = RegimeAwareTradeExecutionEnv(
-        hmm_model=hmm_model,
-        regime_feature_data=train_regime_feat,
-        market_data=train_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-    )
-    agent = DQNAgent(env=env, seed=seed, verbose=verbose, learning_starts=min(200, timesteps // 5))
-    agent.train(total_timesteps=timesteps)
+    Two levels are reported for every comparison and scope:
+      window : all test windows pooled (captures market-path variance for the
+               trained agents; windows share an agent, so treat p-values as
+               indicative)
+      seed   : per-seed mean difference; the mean/std across independent
+               training seeds, plus how many seeds favour the treatment
+    """
+    piv = win.pivot_table(index=["scenario", "seed", "window"], columns="strategy",
+                          values="implementation_shortfall_bps")
+    rows = []
+    scopes: List[Tuple[str, Optional[List[str]]]] = [("ALL", None)]
+    scopes += [(s, [s]) for s in sorted(win["scenario"].unique())]
+    present_trans = [s for s in TRANSITION_SCENARIOS if s in set(win["scenario"])]
+    if present_trans:
+        scopes.append(("TURBULENT", present_trans))
 
-    return evaluate_agent(
-        agent=agent,
-        market_data=test_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-        seed=seed,
-        agent_name="Regime-Aware DQN",
-    )
-
-
-def _train_and_eval_model_c(train_data, test_data, seed: int, timesteps: int, verbose: int):
-    """Model C: DQN with shuffled (uninformative) regime labels."""
-    from src.evaluation.ablation import ShuffledRegimeEnv
-    from src.agents.dqn_agent import DQNAgent
-    from src.agents.evaluator import evaluate_agent
-
-    env = ShuffledRegimeEnv(
-        market_data=train_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-        shuffle_seed=seed + 1000,
-    )
-    agent = DQNAgent(env=env, seed=seed, verbose=verbose, learning_starts=min(200, timesteps // 5))
-    agent.train(total_timesteps=timesteps)
-
-    return evaluate_agent(
-        agent=agent,
-        market_data=test_data,
-        target_inventory=TARGET_INVENTORY,
-        side=SIDE,
-        horizon_steps=HORIZON_STEPS,
-        seed=seed,
-        agent_name="DQN (shuffled regime)",
-    )
+    for rq, treat, ctrl in COMPARISONS:
+        if treat not in piv.columns or ctrl not in piv.columns:
+            continue
+        for scope_name, scope in scopes:
+            sub = piv if scope is None else piv[piv.index.get_level_values("scenario").isin(scope)]
+            d = (sub[treat] - sub[ctrl]).dropna()
+            if d.empty:
+                continue
+            ws = P.paired_stats(d.to_numpy(), n_boot=n_boot)
+            rows.append({"rq": rq, "treatment": treat, "control": ctrl, "scope": scope_name,
+                         "level": "window", **ws, "n_seeds": np.nan, "seed_std": np.nan,
+                         "seeds_favouring": np.nan})
+            per_seed = d.groupby(level="seed").mean()
+            rows.append({"rq": rq, "treatment": treat, "control": ctrl, "scope": scope_name,
+                         "level": "seed", "n": int(len(per_seed)), "mean": float(per_seed.mean()),
+                         "ci_low": np.nan, "ci_high": np.nan, "p_value": np.nan,
+                         "win_rate": float((per_seed < 0).mean()),
+                         "n_seeds": int(len(per_seed)),
+                         "seed_std": float(per_seed.std(ddof=1)) if len(per_seed) > 1 else np.nan,
+                         "seeds_favouring": int((per_seed < 0).sum())})
+    return pd.DataFrame(rows)
 
 
-# ── Main experiment runner ─────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_experiment_suite(
     scenarios: Optional[List[str]] = None,
     seeds: Optional[List[int]] = None,
-    train_timesteps: int = 30_000,
+    train_timesteps: int = 60_000,
     results_dir: str = RESULTS_DIR,
     verbose: int = 0,
     run_ablation: bool = True,
+    include_ppo: bool = True,
+    n_bars: int = P.N_BARS,
+    n_jobs: int = 1,
+    max_windows: Optional[int] = None,
 ) -> ResultsAggregator:
     """
-    Execute the full Stage 8 research experiment suite.
+    Execute the full research experiment suite.
 
     Args:
-        scenarios: List of scenario names to run (default: all 6).
-        seeds: List of random seeds (default: [42, 123, 777]).
-        train_timesteps: DQN training steps per model per seed.
-        results_dir: Directory for output CSV/Parquet/JSON files.
-        verbose: SB3 verbosity (0=quiet).
-        run_ablation: Whether to include Model C (shuffled regime control).
-
-    Returns:
-        ResultsAggregator populated with all run records.
+        scenarios: Scenario names (default: all six).
+        seeds: Random seeds (default: five).
+        train_timesteps: Training steps per learned model.
+        results_dir: Output directory.
+        verbose: Unused (kept for API compatibility).
+        run_ablation: Include the shuffled-regime control models.
+        include_ppo: Include the PPO family (needed for RQ4).
+        n_bars: Length of each synthetic series.
+        n_jobs: Parallel worker processes over (scenario, seed) jobs.
+        max_windows: Optionally cap the number of test windows (smoke tests).
     """
     scenarios = scenarios or DEFAULT_SCENARIOS
-    seeds     = seeds     or DEFAULT_SEEDS
-
-    aggregator = ResultsAggregator()
+    seeds = seeds or DEFAULT_SEEDS
     os.makedirs(results_dir, exist_ok=True)
 
-    total_runs = len(scenarios) * len(seeds)
-    run_count  = 0
-    start_time = time.time()
+    jobs = [dict(scenario=s, seed=sd, timesteps=train_timesteps, n_bars=n_bars,
+                 run_ablation=run_ablation, include_ppo=include_ppo, max_windows=max_windows)
+            for s in scenarios for sd in seeds]
 
-    logger.info("=" * 70)
-    logger.info("KAIRO — Stage 8: Full Research Experiment Suite")
-    logger.info(f"  Scenarios : {scenarios}")
-    logger.info(f"  Seeds     : {seeds}")
-    logger.info(f"  Timesteps : {train_timesteps:,} per model")
-    logger.info(f"  Total runs: {total_runs}")
-    logger.info("=" * 70)
+    config = dict(scenarios=scenarios, seeds=seeds, train_timesteps=train_timesteps, n_bars=n_bars,
+                  horizon_steps=P.HORIZON_STEPS, target_inventory=P.TARGET_INVENTORY, side=P.SIDE,
+                  train_ratio=P.TRAIN_RATIO, run_ablation=run_ablation, include_ppo=include_ppo,
+                  max_windows=max_windows, n_jobs=n_jobs)
+    with open(os.path.join(results_dir, "run_config.json"), "w") as f:
+        json.dump(config, f, indent=2)
 
-    for scenario_name in scenarios:
-        for seed in seeds:
-            run_count += 1
-            logger.info(
-                f"\n[{run_count}/{total_runs}] Scenario={scenario_name} | Seed={seed}"
-            )
+    logger.info("KAIRO experiment suite: %d jobs (%d scenarios x %d seeds), %s steps/model, %d workers",
+                len(jobs), len(scenarios), len(seeds), f"{train_timesteps:,}", n_jobs)
 
-            # ── Generate data ────────────────────────────────────────────────
-            all_data = generate_scenario_data(
-                scenario_name=scenario_name, n_steps=200, seed=seed
-            )
-            train_data, test_data = _split(all_data, ratio=0.70)
+    start = time.time()
+    windows: List[pd.DataFrame] = []
+    hmm_rows: List[Dict[str, Any]] = []
 
-            # ── Baselines (deterministic — run once per scenario/seed) ───────
-            for baseline_result in _eval_baselines(test_data):
-                aggregator.add(
-                    SingleRunRecord.from_baseline_result(
-                        baseline_result, scenario=scenario_name, seed=seed
-                    )
-                )
+    def _collect(res: Dict[str, Any], label: str, done: int) -> None:
+        windows.append(res["windows"])
+        hmm_rows.append(res["hmm"])
+        logger.info("[%d/%d] %s done in %.0fs", done, len(jobs), label, res["seconds"])
 
-            # ── Fit HMM on train split only ──────────────────────────────────
-            hmm_model = _fit_hmm(train_data)
-            if hmm_model is None:
-                logger.warning(f"  HMM failed for {scenario_name}/seed={seed}. Skipping DRL.")
-                continue
+    if n_jobs <= 1:
+        for i, job in enumerate(jobs, 1):
+            _collect(_run_job(job), f"{job['scenario']}/seed={job['seed']}", i)
+    else:
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            futs = {pool.submit(_run_job, j): j for j in jobs}
+            for i, fut in enumerate(as_completed(futs), 1):
+                j = futs[fut]
+                _collect(fut.result(), f"{j['scenario']}/seed={j['seed']}", i)
 
-            # ── Model A: DQN (no regime) ─────────────────────────────────────
-            try:
-                result_a = _train_and_eval_model_a(
-                    train_data, test_data, seed, train_timesteps, verbose
-                )
-                aggregator.add(
-                    SingleRunRecord.from_agent_eval_result(
-                        result_a, scenario=scenario_name, seed=seed
-                    )
-                )
-                logger.info(f"  Model A IS: {result_a.implementation_shortfall_bps:.2f} bps")
-            except Exception as e:
-                logger.error(f"  Model A failed: {e}")
+    win = pd.concat(windows, ignore_index=True)
+    win.to_csv(os.path.join(results_dir, "window_results.csv"), index=False)
+    pd.DataFrame(hmm_rows).to_csv(os.path.join(results_dir, "hmm_validation.csv"), index=False)
 
-            # ── Model B: Regime-Aware DQN ────────────────────────────────────
-            try:
-                result_b = _train_and_eval_model_b(
-                    train_data, test_data, hmm_model, seed, train_timesteps, verbose
-                )
-                aggregator.add(
-                    SingleRunRecord.from_agent_eval_result(
-                        result_b, scenario=scenario_name, seed=seed
-                    )
-                )
-                logger.info(f"  Model B IS: {result_b.implementation_shortfall_bps:.2f} bps")
-            except Exception as e:
-                logger.error(f"  Model B failed: {e}")
+    aggregator = ResultsAggregator()
+    aggregator.add_many(_records_from_windows(win))
+    aggregator.save_csv(os.path.join(results_dir, "experiment_results.csv"))
+    try:
+        aggregator.save_parquet(os.path.join(results_dir, "experiment_results.parquet"))
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.warning("Parquet export skipped: %s", exc)
 
-            # ── Model C: Shuffled regime control (ablation) ──────────────────
-            if run_ablation:
-                try:
-                    result_c = _train_and_eval_model_c(
-                        train_data, test_data, seed, train_timesteps, verbose
-                    )
-                    aggregator.add(
-                        SingleRunRecord.from_agent_eval_result(
-                            result_c, scenario=scenario_name, seed=seed
-                        )
-                    )
-                    logger.info(f"  Model C IS: {result_c.implementation_shortfall_bps:.2f} bps")
-                except Exception as e:
-                    logger.error(f"  Model C failed: {e}")
-
-    elapsed = time.time() - start_time
-    logger.info(f"\nAll runs complete in {elapsed:.1f}s.")
-
-    # ── Save results ───────────────────────────────────────────────────────────
-    aggregator.save_csv(     os.path.join(results_dir, "experiment_results.csv"))
-    aggregator.save_parquet( os.path.join(results_dir, "experiment_results.parquet"))
-
-    summary = aggregator.summary_table()
-    summary.to_csv(os.path.join(results_dir, "summary_table.csv"), index=False)
-
-    comparison = aggregator.comparison_table()
-    comparison.to_csv(os.path.join(results_dir, "comparison_table.csv"), index=False)
-
-    per_scenario = aggregator.per_scenario_table()
-    per_scenario.to_csv(os.path.join(results_dir, "per_scenario_table.csv"), index=False)
-
-    import json
-    rq = aggregator.rq_summary()
+    aggregator.summary_table().to_csv(os.path.join(results_dir, "summary_table.csv"), index=False)
+    aggregator.comparison_table().to_csv(os.path.join(results_dir, "comparison_table.csv"), index=False)
+    aggregator.per_scenario_table().to_csv(os.path.join(results_dir, "per_scenario_table.csv"), index=False)
+    paired_comparisons(win).to_csv(os.path.join(results_dir, "paired_comparisons.csv"), index=False)
     with open(os.path.join(results_dir, "rq_summary.json"), "w") as f:
-        json.dump(rq, f, indent=2, default=str)
+        json.dump(aggregator.rq_summary(), f, indent=2, default=str)
 
-    # ── Print summary ──────────────────────────────────────────────────────────
-    logger.info("\n=== Summary Table (IS bps, mean ± std across seeds) ===")
-    if not summary.empty:
-        logger.info("\n" + summary.to_string(index=False))
-
-    logger.info("\n=== Research Question Answers ===")
-    for k, v in rq.items():
-        logger.info(f"  {k}: {v:.3f}")
-
+    logger.info("All runs complete in %.0fs. Results in %s", time.time() - start, os.path.abspath(results_dir))
     return aggregator

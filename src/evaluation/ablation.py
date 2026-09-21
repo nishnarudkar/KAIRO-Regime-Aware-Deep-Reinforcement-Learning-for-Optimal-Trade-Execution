@@ -39,8 +39,8 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from src.environment.env import TradeExecutionEnv
-from src.execution import BaseImpactModel, AlmgrenChrissImpactModel
-from src.environment.rewards import ModularExecutionReward
+from src.execution import BaseImpactModel, default_impact_model
+from src.environment.rewards import ModularExecutionReward, default_reward_calculator
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,9 @@ class ShuffledRegimeEnv(gym.Env):
         per_share_fee: float = 0.0005,
         default_spread_bps: float = 2.0,
         shuffle_seed: int = 999,    # fixed seed for shuffled noise (NOT tied to price)
+        random_start: bool = False,
+        start_range=None,
+        history_bars: int = 60,
     ):
         super().__init__()
 
@@ -90,11 +93,14 @@ class ShuffledRegimeEnv(gym.Env):
             side=side,
             horizon_steps=horizon_steps,
             action_fractions=action_fractions,
-            impact_model=impact_model or AlmgrenChrissImpactModel(eta=0.05, gamma=0.01),
-            reward_calculator=reward_calculator or ModularExecutionReward(),
+            impact_model=impact_model or default_impact_model(),
+            reward_calculator=reward_calculator or default_reward_calculator(),
             max_participation_rate=max_participation_rate,
             per_share_fee=per_share_fee,
             default_spread_bps=default_spread_bps,
+            random_start=random_start,
+            start_range=start_range,
+            history_bars=history_bars,
         )
 
     def _random_regime_features(self) -> np.ndarray:

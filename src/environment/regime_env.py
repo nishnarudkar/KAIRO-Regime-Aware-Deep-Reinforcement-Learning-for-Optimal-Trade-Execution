@@ -30,8 +30,8 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from src.environment.env import TradeExecutionEnv
-from src.execution import BaseImpactModel, AlmgrenChrissImpactModel
-from src.environment.rewards import ModularExecutionReward
+from src.execution import BaseImpactModel, default_impact_model
+from src.environment.rewards import ModularExecutionReward, default_reward_calculator
 
 
 class RegimeAwareTradeExecutionEnv(gym.Env):
@@ -86,9 +86,14 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         max_participation_rate: float = 0.15,
         per_share_fee: float = 0.0005,
         default_spread_bps: float = 2.0,
+        random_start: bool = False,
+        start_range: Optional[Tuple[int, int]] = None,
+        history_bars: int = 60,
+        warmup_bars: int = 30,
     ):
         super().__init__()
 
+        self.warmup_bars = int(warmup_bars)
         self.hmm_model = hmm_model
         self.regime_feature_data = regime_feature_data
         self.market_data = market_data
@@ -110,8 +115,8 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         )
 
         # Shared sub-systems
-        self.impact_model = impact_model or AlmgrenChrissImpactModel(eta=0.05, gamma=0.01)
-        self.reward_calculator = reward_calculator or ModularExecutionReward()
+        self.impact_model = impact_model or default_impact_model()
+        self.reward_calculator = reward_calculator or default_reward_calculator()
 
         # Delegate market replay / execution to base env
         self._base_env = TradeExecutionEnv(
@@ -125,11 +130,16 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
             max_participation_rate=max_participation_rate,
             per_share_fee=per_share_fee,
             default_spread_bps=default_spread_bps,
+            random_start=random_start,
+            start_range=start_range,
+            history_bars=history_bars,
         )
 
         # Causal inference engine — initialised lazily after HMM check
         self._causal_inference = None
         self._regime_feature_rows: Optional[np.ndarray] = None
+        self._feature_cache: Dict[int, Optional[np.ndarray]] = {}
+        self._row_offset: int = 0
         self._current_step: int = 0
         self._current_regime_id: int = 0
         self._current_regime_probs: np.ndarray = np.ones(4) / 4  # uniform prior
@@ -180,25 +190,29 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         Resets both the base environment and the causal regime inference state
         so the forward filter starts fresh (no carryover from previous episode).
         """
+        # Reset base env first: it decides which dataset / window this episode uses.
+        base_obs, base_info = self._base_env.reset(seed=seed, options=options)
+
         # Reset causal inference — CRITICAL: must start forward filter from scratch
         self._causal_inference.reset_online_state()
         self._current_step = 0
         self._current_regime_id = 0
         self._current_regime_probs = np.ones(self.hmm_model.n_regimes) / self.hmm_model.n_regimes
 
-        # Prepare regime feature rows for this episode
+        # Regime features aligned to the dataset chosen by the base env
         regime_df = None
         if options and "regime_feature_data" in options:
             regime_df = options["regime_feature_data"]
+        elif isinstance(self.regime_feature_data, (list, tuple)):
+            regime_df = self.regime_feature_data[self._base_env.dataset_idx]
         elif self.regime_feature_data is not None:
             regime_df = self.regime_feature_data
+        self._regime_feature_rows = self._get_feature_rows(regime_df)
 
-        self._regime_feature_rows = self._prepare_regime_features(regime_df)
-
-        # Reset base env
-        base_obs, base_info = self._base_env.reset(seed=seed, options=options)
-
-        # Step regime engine for first timestep
+        # Warm-start the causal filter on the bars *before* the window (past only),
+        # then take the first in-window step.
+        self._row_offset = self._base_env.window_start
+        self._warm_start_filter()
         self._step_regime()
 
         obs = self._extend_observation(base_obs)
@@ -228,6 +242,27 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
 
     # ── Regime Stepping ────────────────────────────────────────────────────────
 
+    def _get_feature_rows(self, df: Optional[pd.DataFrame]) -> Optional[np.ndarray]:
+        """Feature matrix for a dataset, cached by object identity (datasets are reused each episode)."""
+        if df is None:
+            return None
+        key = id(df)
+        if key not in self._feature_cache:
+            self._feature_cache[key] = self._prepare_regime_features(df)
+        return self._feature_cache[key]
+
+    def _warm_start_filter(self) -> None:
+        """Run the forward filter over up to ``warmup_bars`` bars preceding the window."""
+        rows = self._regime_feature_rows
+        if rows is None or self.warmup_bars <= 0 or self._row_offset <= 0:
+            return
+        lo = max(0, self._row_offset - self.warmup_bars)
+        for r in range(lo, min(self._row_offset, len(rows))):
+            x = rows[r]
+            if np.any(np.isnan(x)):
+                continue   # rolling-feature warm-up rows carry no information
+            self._causal_inference.step_online(x)
+
     def _step_regime(self) -> None:
         """
         Advance HMM forward filter by one step.
@@ -239,7 +274,7 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         is passed — never any future row.
         """
         if self._regime_feature_rows is not None:
-            idx = min(self._current_step, len(self._regime_feature_rows) - 1)
+            idx = min(self._row_offset + self._current_step, len(self._regime_feature_rows) - 1)
             x_t = self._regime_feature_rows[idx]
 
             # Replace any NaN (warmup period) with zeros — safe default

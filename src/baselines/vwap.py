@@ -1,38 +1,50 @@
 """
 Baseline Execution Strategy: VWAP (Volume-Weighted Average Price).
 
-Allocates order slices proportionally to the expected intra-day volume curve,
-estimated ONLY from historically observed volume up to and including step t.
+Allocates the parent order in proportion to an *ex-ante* intraday volume
+profile, estimated only from bars that precede the execution window (average
+volume by minute-of-day over earlier trading days).
 
 --- Strict No-Lookahead Protocol ---
-At decision time step t the strategy has access ONLY to:
-  - observed_volumes[0 .. t-1]  : volumes from all COMPLETED prior bars
-  - target_inventory            : total shares to execute
-  - total_steps                 : horizon length
-
-The CURRENT bar's realized volume (bar t) is NOT known before the bar closes.
-Volume profile estimation must therefore use steps 0 .. t-1 only.
-
-Estimation approach:
-  1. At t=0 no history exists → fall back to TWAP equal slice (1/T).
-  2. At t>0 compute the empirical weight of each future bar by averaging past
-     observed volumes. Because we have no future volume data we assume each
-     remaining bar carries the same weight = mean(observed_volumes) /
-     sum(all bar estimates). This gives a data-driven but forward-looking-free
-     schedule recomputed at every step with fresh past data.
+  - The profile is built from history strictly before the window start.
+  - No volume of the current or future bars is used to size a slice.
+  - If no history is available the profile is flat, which makes the strategy
+    identical to TWAP. This is reported honestly through ``uses_profile``.
 """
 
-from typing import List
+from typing import List, Optional
 from src.baselines.base import BaseExecutionStrategy
 import numpy as np
+import pandas as pd
+
+
+def estimate_volume_profile(history: Optional[pd.DataFrame], window: pd.DataFrame) -> Optional[np.ndarray]:
+    """
+    Expected relative volume for each bar of ``window``, from ``history`` only.
+
+    Averages history volume by minute-of-day. Returns None when there is not
+    enough history (fewer than one full pass over the window's minutes).
+    """
+    if history is None or len(history) < len(window) or "timestamp" not in history.columns:
+        return None
+    ts_h = pd.to_datetime(history["timestamp"])
+    minute_h = (ts_h.dt.hour * 60 + ts_h.dt.minute).to_numpy()
+    by_minute = pd.Series(history["volume"].to_numpy()).groupby(minute_h).mean()
+    ts_w = pd.to_datetime(window["timestamp"])
+    minute_w = (ts_w.dt.hour * 60 + ts_w.dt.minute).to_numpy()
+    fallback = float(np.mean(history["volume"]))
+    profile = np.array([float(by_minute.get(m, fallback)) for m in minute_w])
+    if not np.all(np.isfinite(profile)) or profile.sum() <= 0:
+        return None
+    return profile
 
 
 class VWAPStrategy(BaseExecutionStrategy):
     """
     Volume-Weighted Average Price (VWAP) execution strategy.
 
-    Uses the rolling mean of observed bar volumes to build a forward
-    volume schedule without using any future bar data.
+    Follows an ex-ante intraday volume profile estimated from history
+    that precedes the execution window.
     """
 
     def __init__(self, target_inventory: float, total_steps: int):
@@ -48,8 +60,17 @@ class VWAPStrategy(BaseExecutionStrategy):
 
         self.target_inventory = float(target_inventory)
         self.total_steps = int(total_steps)
-        # Running buffer of observed bar volumes (populated via get_action calls)
+        # Optional ex-ante volume profile (length >= total_steps); None => flat (TWAP-like).
+        self.volume_profile: Optional[np.ndarray] = None
         self._observed_volumes: List[float] = []
+
+    @property
+    def uses_profile(self) -> bool:
+        return self.volume_profile is not None
+
+    def set_volume_profile(self, profile: Optional[np.ndarray]) -> None:
+        """Provide the ex-ante volume profile estimated from pre-window history."""
+        self.volume_profile = None if profile is None else np.asarray(profile, dtype=float)
 
     def get_action(
         self,
@@ -83,33 +104,21 @@ class VWAPStrategy(BaseExecutionStrategy):
         """
         steps_remaining = total_steps - time_step
 
-        # Final step: flush all remaining inventory
-        if steps_remaining <= 1:
-            # Record current bar volume before returning
-            if current_volume > 0:
-                self._observed_volumes.append(float(current_volume))
-            return float(remaining_inventory)
-
-        # ------------------------------------------------------------------
-        # Compute weight for current step from PAST volumes only (no lookahead)
-        # ------------------------------------------------------------------
-        if len(self._observed_volumes) == 0:
-            # No history yet: equal TWAP slice
-            weight = 1.0 / steps_remaining
-        else:
-            # Mean of observed past bar volumes as the expected volume per bar
-            mean_vol = float(np.mean(self._observed_volumes))
-            # Allocate proportionally: this step gets mean_vol out of
-            # (steps_remaining * mean_vol) expected total remaining volume
-            weight = 1.0 / steps_remaining  # uniform under constant-volume assumption
-
-        target_qty = weight * remaining_inventory
-
-        # Record current bar volume AFTER computing the decision (no lookahead)
+        # Record the current bar volume for diagnostics only (never used for sizing).
         if current_volume > 0:
             self._observed_volumes.append(float(current_volume))
 
-        return float(min(target_qty, remaining_inventory))
+        # Final step: flush all remaining inventory
+        if steps_remaining <= 1:
+            return float(remaining_inventory)
+
+        profile = self.volume_profile
+        if profile is not None and len(profile) >= total_steps and profile[time_step:total_steps].sum() > 0:
+            weight = float(profile[time_step] / profile[time_step:total_steps].sum())
+        else:
+            weight = 1.0 / steps_remaining   # flat profile == TWAP
+
+        return float(min(weight * remaining_inventory, remaining_inventory))
 
     def reset_history(self) -> None:
         """Clear the observed-volume history (call before a new episode)."""

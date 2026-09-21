@@ -6,6 +6,7 @@ from src.execution.impact_models import (
     BaseImpactModel,
     LinearImpactModel,
     AlmgrenChrissImpactModel,
+    default_impact_model,
 )
 from src.execution.simulator import (
     ExecutionSimulator,
@@ -17,6 +18,7 @@ __all__ = [
     "BaseImpactModel",
     "LinearImpactModel",
     "AlmgrenChrissImpactModel",
+    "default_impact_model",
     "ExecutionSimulator",
     "StepResult",
     "ExecutionSummary",

@@ -16,7 +16,7 @@ from typing import Optional
 import pandas as pd
 
 from src.execution.simulator import ExecutionSimulator
-from src.execution.impact_models import BaseImpactModel, AlmgrenChrissImpactModel
+from src.execution.impact_models import BaseImpactModel, default_impact_model
 from src.baselines.base import BaseExecutionStrategy, BaselineResult
 
 
@@ -47,7 +47,7 @@ class BaselineRunner:
             per_share_fee: Commission per executed share.
             default_spread_bps: Synthetic spread when bid/ask absent.
         """
-        self.impact_model = impact_model or AlmgrenChrissImpactModel(eta=0.05, gamma=0.01)
+        self.impact_model = impact_model or default_impact_model()
         self.simulator = ExecutionSimulator(
             impact_model=self.impact_model,
             max_participation_rate=max_participation_rate,
@@ -62,6 +62,7 @@ class BaselineRunner:
         target_inventory: float = 100_000.0,
         side: str = "BUY",
         horizon_steps: Optional[int] = None,
+        history: Optional[pd.DataFrame] = None,
     ) -> BaselineResult:
         """
         Execute strategy over market_data and return standardized metrics.
@@ -86,12 +87,19 @@ class BaselineRunner:
             target_inventory: Total shares to execute.
             side: 'BUY' or 'SELL'.
             horizon_steps: Number of steps; defaults to len(market_data).
+            history: Optional bars preceding market_data (past only), used by VWAP
+                     to estimate its volume profile.
 
         Returns:
             BaselineResult with all standardized metrics.
         """
         n = len(market_data)
         total_steps = min(horizon_steps if horizon_steps is not None else n, n)
+
+        # VWAP needs an ex-ante volume profile; build it from pre-window history only.
+        if hasattr(strategy, "set_volume_profile"):
+            from src.baselines.vwap import estimate_volume_profile
+            strategy.set_volume_profile(estimate_volume_profile(history, market_data.iloc[:total_steps]))
 
         self.simulator.reset(
             market_data=market_data,

@@ -33,6 +33,7 @@ class ModularExecutionReward(BaseRewardCalculator):
         lambda_risk: float = 1e-4,
         lambda_fee: float = 1.0,
         lambda_terminal: float = 10.0,
+        reward_scale: float = 1.0,
     ):
         """
         Args:
@@ -41,12 +42,16 @@ class ModularExecutionReward(BaseRewardCalculator):
             lambda_risk: Weight for inventory holding risk penalty.
             lambda_fee: Weight for transaction fee penalty.
             lambda_terminal: Weight for terminal unexecuted inventory penalty.
+            reward_scale: Multiplier applied to the final reward. Penalties are fractions of
+                          order notional (~1e-4 per step), which starves gradient-based agents;
+                          scaling by 1e4 expresses the reward in basis points of notional.
         """
         self.lambda_cost = lambda_cost
         self.lambda_impact = lambda_impact
         self.lambda_risk = lambda_risk
         self.lambda_fee = lambda_fee
         self.lambda_terminal = lambda_terminal
+        self.reward_scale = reward_scale
 
     def calculate_reward(
         self,
@@ -123,7 +128,7 @@ class ModularExecutionReward(BaseRewardCalculator):
             term_penalty = 0.0
 
         total_penalty = cost_penalty + impact_penalty + risk_penalty + fee_penalty + term_penalty
-        reward = -float(total_penalty)
+        reward = -float(total_penalty) * self.reward_scale
 
         return {
             "reward": reward,
@@ -133,3 +138,11 @@ class ModularExecutionReward(BaseRewardCalculator):
             "fee_penalty": fee_penalty,
             "terminal_penalty": term_penalty
         }
+
+
+DEFAULT_REWARD_SCALE = 1.0e4   # reward expressed in bps of parent-order notional
+
+
+def default_reward_calculator() -> ModularExecutionReward:
+    """Reward used by every environment unless one is passed explicitly."""
+    return ModularExecutionReward(reward_scale=DEFAULT_REWARD_SCALE)

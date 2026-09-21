@@ -53,39 +53,38 @@ class CausalRegimeInference:
         """Reset streaming online state buffer."""
         self.current_belief = None
 
-    def _emission_log_likelihoods(self, x: np.ndarray) -> np.ndarray:
-        """
-        Compute emission log likelihoods ln P(x | S = k) for observation vector x (D,).
-        
-        Returns:
-            1D array of shape (K,) containing log probabilities.
-        """
+    def _prepare_gaussians(self) -> None:
+        """Precompute precision matrices and log-determinants for fast per-step evaluation."""
         K = self.n_regimes
-        log_b = np.zeros(K, dtype=np.float64)
-
+        D = self.means.shape[1]
+        self._precisions = np.zeros((K, D, D))
+        self._log_norm = np.zeros(K)
         for k in range(K):
-            mu_k = self.means[k]
-
             if self.cov_type == "full":
-                cov_k = self.covars[k]
+                cov_k = np.asarray(self.covars[k])
             elif self.cov_type == "diag":
                 cov_k = np.diag(self.covars[k])
             elif self.cov_type == "spherical":
-                cov_k = np.eye(len(mu_k)) * float(self.covars[k])
+                cov_k = np.eye(D) * float(np.ravel(self.covars[k])[0])
             else:
-                cov_k = self.covars[k]
+                cov_k = np.asarray(self.covars[k])
+            cov_k = cov_k + np.eye(D) * 1e-6   # tiny diagonal regularisation
+            sign, logdet = np.linalg.slogdet(cov_k)
+            self._precisions[k] = np.linalg.pinv(cov_k)
+            self._log_norm[k] = -0.5 * (D * np.log(2.0 * np.pi) + logdet)
 
-            # Add tiny regularization to diagonal for numerical stability
-            cov_k = cov_k + np.eye(len(mu_k)) * 1e-6
+    def _emission_log_likelihoods(self, x: np.ndarray) -> np.ndarray:
+        """
+        Compute emission log likelihoods ln P(x | S = k) for observation vector x (D,).
 
-            try:
-                log_b[k] = multivariate_normal.logpdf(x, mean=mu_k, cov=cov_k)
-            except Exception:
-                # Fallback for numerical edge cases
-                diff = x - mu_k
-                log_b[k] = -0.5 * np.sum(diff ** 2)
-
-        return log_b
+        Returns:
+            1D array of shape (K,) containing log probabilities.
+        """
+        if not hasattr(self, "_precisions"):
+            self._prepare_gaussians()
+        diff = x[None, :] - self.means                      # (K, D)
+        maha = np.einsum("kd,kde,ke->k", diff, self._precisions, diff)
+        return self._log_norm - 0.5 * maha
 
     def step_online(self, x_t: np.ndarray) -> Tuple[int, np.ndarray]:
         """

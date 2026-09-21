@@ -151,3 +151,17 @@ class AlmgrenChrissImpactModel(BaseImpactModel):
         participation_rate = trade_size / volume
         perm_impact = sign * self.gamma * participation_rate * price
         return perm_impact
+
+
+# Calibration used by every environment / runner unless a model is passed explicitly.
+#   eta   = 0.5    square-root law temporary impact  eta * sigma_bar * sqrt(q / V) * P
+#   gamma = 0.001  small linear permanent impact     gamma * (q / V) * P
+# For a 100k-share order in a ~60k shares/min market this gives a total cost of
+# roughly 10-30 bps, in line with institutional execution cost studies.
+DEFAULT_ETA = 0.5
+DEFAULT_GAMMA = 0.001
+
+
+def default_impact_model() -> AlmgrenChrissImpactModel:
+    """Calibrated Almgren-Chriss impact model shared by all environments and baselines."""
+    return AlmgrenChrissImpactModel(eta=DEFAULT_ETA, gamma=DEFAULT_GAMMA, alpha=0.5)
