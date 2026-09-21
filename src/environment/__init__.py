@@ -23,9 +23,11 @@ class BaseRewardCalculator(ABC):
 
 from src.environment.rewards import ModularExecutionReward
 from src.environment.env import TradeExecutionEnv
+from src.environment.regime_env import RegimeAwareTradeExecutionEnv
 
 __all__ = [
     "BaseRewardCalculator",
     "ModularExecutionReward",
     "TradeExecutionEnv",
+    "RegimeAwareTradeExecutionEnv",
 ]
