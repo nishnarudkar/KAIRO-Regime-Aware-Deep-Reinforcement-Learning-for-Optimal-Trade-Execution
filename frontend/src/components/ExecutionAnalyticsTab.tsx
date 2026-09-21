@@ -143,7 +143,7 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
                   cursor={{ stroke: '#414850' }}
                   content={<ChartTooltip labelPrefix="Step " format={(v) => `${fmtInt(v)} shares`} />}
                 />
-                <Area type="stepAfter" dataKey="inventory" stroke="#d8b46a" strokeWidth={1.5} fill="#d8b46a" fillOpacity={0.08} />
+                <Area isAnimationActive={false} type="stepAfter" dataKey="inventory" stroke="#d8b46a" strokeWidth={1.5} fill="#d8b46a" fillOpacity={0.08} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -161,7 +161,7 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
                   cursor={{ stroke: '#414850' }}
                   content={<ChartTooltip labelPrefix="Step " format={(v) => fmtUsd(v)} />}
                 />
-                <Line type="monotone" dataKey="price" stroke="#e4e6e8" strokeWidth={1.5} dot={false} />
+                <Line isAnimationActive={false} type="monotone" dataKey="price" stroke="#e4e6e8" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -201,7 +201,7 @@ export function ExecutionAnalyticsTab({ executionRecord, onNavigateToNew }: Exec
                 <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
                 <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
                 <Tooltip cursor={{ fill: '#16181a' }} content={<ChartTooltip labelPrefix="Fill " format={(v) => `${v} steps`} />} />
-                <Bar dataKey="count" fill="#7d9bb8" radius={[1, 1, 0, 0]} maxBarSize={56} />
+                <Bar isAnimationActive={false} dataKey="count" fill="#7d9bb8" radius={[1, 1, 0, 0]} maxBarSize={56} />
               </BarChart>
             </ResponsiveContainer>
           </div>

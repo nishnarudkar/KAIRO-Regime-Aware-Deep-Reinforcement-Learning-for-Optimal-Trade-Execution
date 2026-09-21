@@ -57,6 +57,7 @@ def parse_args():
     parser.add_argument("--timesteps",   type=int,  default=60_000)
     parser.add_argument("--jobs",        type=int,  default=1, help="parallel worker processes")
     parser.add_argument("--n-bars",      type=int,  default=3000)
+    parser.add_argument("--horizon",     type=int,  default=30, help="execution horizon in one-minute bars")
     parser.add_argument("--no-ablation", action="store_true")
     parser.add_argument("--no-ppo",      action="store_true")
     parser.add_argument("--results-dir", type=str,  default="results")
@@ -87,6 +88,7 @@ def main():
         include_ppo=not args.no_ppo,
         n_bars=args.n_bars,
         n_jobs=args.jobs,
+        horizon=args.horizon,
     )
 
     logger.info("=" * 70)

@@ -35,6 +35,24 @@ TRAIN_RATIO = 0.70
 WARMUP_BARS = 60          # bars of history required before any episode start
 N_BARS = 3000             # length of each synthetic series (~7.7 trading days)
 N_REGIMES = 4
+# Regime features chosen on tuning seeds (9001-9003, disjoint from the experiment seeds) by adjusted Rand
+# index against the true regime: 0.72 vs 0.57 for the original five features.
+HMM_FEATURES = ["log_realized_vol_15m", "log_parkinson_vol", "log_spread_bps", "log_volume_ratio_60m"]
+ORDER_PARTICIPATION = 0.055   # order = 5.5% of the window's expected volume (=100k shares at 60k/min, 30 bars)
+HISTORY_BARS = 60
+
+
+def window_order_size(df: pd.DataFrame, start: int, horizon: int = HORIZON_STEPS,
+                      frac: float = ORDER_PARTICIPATION, history_bars: int = HISTORY_BARS) -> float:
+    """
+    Order size for a window: ``frac`` of the expected volume (trailing mean volume x horizon).
+
+    Uses only bars before ``start`` (same formula as the environment), so the order is fillable
+    under the participation cap in every scenario, including thin ones.
+    """
+    hist = df["volume"].iloc[max(0, start - history_bars):start]
+    ref = float(hist.mean()) if len(hist) >= 5 else float(df["volume"].iloc[start])
+    return float(frac * ref * horizon)
 
 # Strategy names used in result tables (kept stable across the code base).
 NAME_TWAP, NAME_VWAP, NAME_POV = "TWAP", "VWAP", "POV"
@@ -103,7 +121,7 @@ def fit_hmm(train_dfs: Sequence[pd.DataFrame], random_state: int = 42):
     from src.regimes.hmm_model import MarketHMM
     from src.regimes.features import RegimeFeatureEngine, RegimeFeatureScaler
 
-    engine = RegimeFeatureEngine()
+    engine = RegimeFeatureEngine(feature_columns=HMM_FEATURES)
     blocks = []
     for d in train_dfs:
         _, X = engine.extract_feature_matrix(engine.compute_features(d), drop_na=True)
@@ -111,7 +129,7 @@ def fit_hmm(train_dfs: Sequence[pd.DataFrame], random_state: int = 42):
     X = np.vstack(blocks)
     if len(X) < 50:
         return None
-    hmm = MarketHMM(n_regimes=N_REGIMES, random_state=random_state)
+    hmm = MarketHMM(n_regimes=N_REGIMES, random_state=random_state, feature_names=list(HMM_FEATURES))
     try:
         hmm.fit(X, scaler=RegimeFeatureScaler(method="robust"))
     except Exception as exc:  # pragma: no cover - defensive
@@ -133,6 +151,8 @@ def build_env(
     target_inventory: float = TARGET_INVENTORY,
     side: str = SIDE,
     shuffle_seed: int = 1000,
+    order_participation: Optional[float] = None,
+    lambda_terminal: Optional[float] = None,
 ):
     """
     Build an environment of the requested kind over one or more datasets.
@@ -146,8 +166,12 @@ def build_env(
     data = list(datasets) if len(datasets) > 1 else datasets[0]
     common = dict(
         target_inventory=target_inventory, side=side, horizon_steps=horizon,
-        random_start=random_start, start_range=start_range,
+        random_start=random_start, start_range=start_range, order_participation=order_participation,
     )
+    if lambda_terminal is not None:
+        from src.environment.rewards import ModularExecutionReward, DEFAULT_REWARD_SCALE
+        common["reward_calculator"] = ModularExecutionReward(
+            lambda_terminal=lambda_terminal, reward_scale=DEFAULT_REWARD_SCALE)
     if kind == "plain":
         return TradeExecutionEnv(market_data=data, **common)
     if kind == "shuffled":
@@ -179,26 +203,34 @@ PPO_HPARAMS: Dict[str, Any] = dict(
 )
 
 
-def make_agent(algo: str, env, seed: int, timesteps: int):
-    """Construct an untrained DQN / PPO agent with the documented hyperparameters."""
+def make_agent(algo: str, env, seed: int, timesteps: int, hparams: Optional[Dict[str, Any]] = None,
+               net_arch: Optional[List[int]] = None):
+    """Construct an untrained DQN / PPO agent (documented hyperparameters, optionally overridden)."""
+    kw = dict(hparams or {})
+    if net_arch:
+        kw["policy_kwargs"] = {"net_arch": list(net_arch)}
     if algo == "dqn":
         from src.agents.dqn_agent import DQNAgent
+        merged = {**DQN_HPARAMS, **kw}
         return DQNAgent(env=env, seed=seed, verbose=0,
-                        learning_starts=min(1_000, max(200, timesteps // 20)), **DQN_HPARAMS)
+                        learning_starts=min(1_000, max(200, timesteps // 20)), **merged)
     if algo == "ppo":
         from src.agents.ppo_agent import PPOAgent
-        return PPOAgent(env=env, seed=seed, verbose=0, **PPO_HPARAMS)
+        return PPOAgent(env=env, seed=seed, verbose=0, **{**PPO_HPARAMS, **kw})
     raise ValueError(f"Unknown algorithm '{algo}'")
 
 
 def train_agent(algo: str, kind: str, train_dfs: Sequence[pd.DataFrame], hmm, seed: int,
-                timesteps: int, cut: Optional[int] = None):
+                timesteps: int, cut: Optional[int] = None, horizon: int = HORIZON_STEPS,
+                order_participation: Optional[float] = None, hparams: Optional[Dict[str, Any]] = None,
+                net_arch: Optional[List[int]] = None, lambda_terminal: Optional[float] = None):
     """Train an agent on random windows of the train region(s). Returns the agent."""
     n = min(len(d) for d in train_dfs)
-    rng_range = train_start_range(cut if cut is not None else n)
+    rng_range = train_start_range(cut if cut is not None else n, horizon)
     env = build_env(kind, train_dfs, hmm, random_start=True, start_range=rng_range,
-                    shuffle_seed=seed + 1000)
-    agent = make_agent(algo, env, seed, timesteps)
+                    shuffle_seed=seed + 1000, horizon=horizon, order_participation=order_participation,
+                    lambda_terminal=lambda_terminal)
+    agent = make_agent(algo, env, seed, timesteps, hparams=hparams, net_arch=net_arch)
     agent.train(total_timesteps=timesteps)
     return agent
 
@@ -244,10 +276,14 @@ def rollout_agent_window(agent, env, start: int, seed: int = 0, dataset_idx: int
 
 def rollout_baseline_window(name: str, df: pd.DataFrame, start: int,
                             horizon: int = HORIZON_STEPS, target_inventory: float = TARGET_INVENTORY,
-                            side: str = SIDE, history_bars: int = 780) -> Dict[str, Any]:
+                            side: str = SIDE, history_bars: int = 780,
+                            order_participation: Optional[float] = None) -> Dict[str, Any]:
     """Run TWAP / VWAP / POV on one window with only pre-window history available."""
     from src.baselines import TWAPStrategy, VWAPStrategy, POVStrategy
     from src.baselines.runner import BaselineRunner
+
+    if order_participation:
+        target_inventory = window_order_size(df, start, horizon, order_participation)
 
     strategy = {
         NAME_TWAP: lambda: TWAPStrategy(target_inventory=target_inventory, total_steps=horizon),
@@ -290,11 +326,12 @@ def evaluate_agent_windows(agent, env, starts: Sequence[int], name: str, seed: i
     return pd.DataFrame(rows)
 
 
-def evaluate_baseline_windows(df: pd.DataFrame, starts: Sequence[int]) -> pd.DataFrame:
+def evaluate_baseline_windows(df: pd.DataFrame, starts: Sequence[int], horizon: int = HORIZON_STEPS,
+                              order_participation: Optional[float] = None) -> pd.DataFrame:
     rows = []
     for name in BASELINE_NAMES:
         for w, s in enumerate(starts):
-            r = rollout_baseline_window(name, df, s)
+            r = rollout_baseline_window(name, df, s, horizon=horizon, order_participation=order_participation)
             rows.append({"strategy": name, "window": w, **{k: v for k, v in r.items() if not k.endswith("trajectory")}})
     return pd.DataFrame(rows)
 

@@ -1,0 +1,7 @@
+{
+  "best_baseline_is_bps": 20.085061316283483,
+  "dqn_is_bps": 21.5007726439602,
+  "regime_dqn_is_bps": 21.251059437121835,
+  "rq1_dqn_vs_baseline_bps": -1.4157113276767177,
+  "rq2_regime_vs_plain_dqn_bps": 0.24971320683836495
+}

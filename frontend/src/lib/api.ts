@@ -183,9 +183,12 @@ export interface ExperimentResults {
   config: {
     seeds?: number[];
     scenarios?: string[];
-    train_timesteps?: number;
+    train_timesteps?: number | null;
     n_bars?: number;
     horizon_steps?: number;
+    order_participation?: number | null;
+    note?: string;
+    source?: string;
   };
   summary: SummaryRow[];
   comparisons: ComparisonRow[];
@@ -255,4 +258,7 @@ export const getModels = () => getJson<ModelMetadataResponse[]>('/api/models', '
 
 export const getExperiments = () => getJson<ExperimentSummaryResponse[]>('/api/experiments', 'Failed to fetch experiments');
 
-export const getExperimentResults = () => getJson<ExperimentResults>('/api/experiments/results', 'No experiment results');
+export type ResultSuite = 'default' | 'long_horizon' | 'real_data';
+
+export const getExperimentResults = (suite: ResultSuite = 'default') =>
+  getJson<ExperimentResults>(`/api/experiments/results?suite=${suite}`, 'No experiment results');

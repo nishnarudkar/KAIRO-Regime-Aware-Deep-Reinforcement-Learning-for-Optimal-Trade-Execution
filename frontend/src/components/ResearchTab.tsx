@@ -7,6 +7,7 @@ import {
   CurrentRegimeResponse,
   ExperimentResults,
   ComparisonRow,
+  ResultSuite,
 } from '../lib/api';
 import { Panel, PanelHeader, PageTitle, KeyValueTable, regimeColor, fmtUsd } from './ui';
 
@@ -60,7 +61,7 @@ function ExperimentPanel({ results }: { results: ExperimentResults }) {
     <Panel>
       <PanelHeader
         title="Recorded experiment results"
-        note={`${cfg.scenarios?.length ?? '?'} scenarios × ${cfg.seeds?.length ?? '?'} seeds, ${(cfg.train_timesteps ?? 0).toLocaleString('en-US')} training steps per model, evaluated on non-overlapping out-of-sample windows of ${cfg.horizon_steps ?? 30} bars. Differences are paired: treatment minus control in implementation-shortfall bps, so negative means cheaper.`}
+        note={`${cfg.scenarios?.length ?? '?'} scenario${(cfg.scenarios?.length ?? 0) === 1 ? '' : 's'} × ${cfg.seeds?.length ?? '?'} seed${(cfg.seeds?.length ?? 0) === 1 ? '' : 's'}${cfg.train_timesteps ? `, ${cfg.train_timesteps.toLocaleString('en-US')} training steps per model` : ''}, evaluated on non-overlapping out-of-sample windows of ${cfg.horizon_steps ?? 30} bars${cfg.order_participation ? `, order = ${(cfg.order_participation * 100).toFixed(1)}% of expected window volume` : ''}. Differences are paired: treatment minus control in implementation-shortfall bps, so negative means cheaper.${cfg.note ? ` ${cfg.note}.` : ''}`}
         right={
           <div>
             <label htmlFor="rs-scope" className="sr-only">Scope</label>
@@ -159,7 +160,8 @@ export function ResearchTab() {
   const [scenario, setScenario] = useState('normal');
   const [refreshKey, setRefreshKey] = useState(0);
   const [regime, setRegime] = useState<{ key: string; data?: CurrentRegimeResponse; error?: string } | null>(null);
-  const [results, setResults] = useState<ExperimentResults | null | undefined>(undefined);
+  const [suites, setSuites] = useState<Partial<Record<ResultSuite, ExperimentResults | null>> | undefined>(undefined);
+  const [suite, setSuite] = useState<ResultSuite>('default');
 
   const requestKey = `${scenario}:${refreshKey}`;
   const loading = regime?.key !== requestKey;
@@ -177,11 +179,23 @@ export function ResearchTab() {
   }, [scenario, requestKey]);
 
   useEffect(() => {
-    getExperimentResults()
-      .then(setResults)
-      .catch(() => setResults(null));
+    const names: ResultSuite[] = ['default', 'long_horizon', 'real_data'];
+    Promise.all(names.map((n) => getExperimentResults(n).catch(() => null))).then((all) => {
+      const m: Partial<Record<ResultSuite, ExperimentResults | null>> = {};
+      names.forEach((n, i) => {
+        m[n] = all[i];
+      });
+      setSuites(m);
+    });
   }, []);
 
+  const results = suites === undefined ? undefined : suites[suite] ?? null;
+  const SUITE_LABELS: Record<ResultSuite, string> = {
+    default: 'Main experiment (30-minute horizon)',
+    long_horizon: 'Long horizon (90 minutes)',
+    real_data: 'Real AAPL data (transfer test)',
+  };
+  const availableSuites = (Object.keys(SUITE_LABELS) as ResultSuite[]).filter((n) => suites?.[n]);
   const regimeData = regime?.data;
   const probs = regimeData
     ? REGIME_ORDER.filter((n) => n in regimeData.regime_probabilities).map((n) => ({
@@ -266,6 +280,21 @@ export function ResearchTab() {
         </Panel>
       )}
 
+      {availableSuites.length > 1 && (
+        <div role="tablist" aria-label="Result suite" className="flex flex-wrap gap-x-5 gap-y-1 border-b border-line">
+          {availableSuites.map((n) => (
+            <button
+              key={n}
+              role="tab"
+              aria-selected={suite === n}
+              onClick={() => setSuite(n)}
+              className={`pb-2 text-[13px] border-b-2 -mb-px ${suite === n ? 'text-ink border-accent' : 'text-ink-3 border-transparent hover:text-ink-2'}`}
+            >
+              {SUITE_LABELS[n]}
+            </button>
+          ))}
+        </div>
+      )}
       {results === undefined && <p className="text-[13px] text-ink-3">Loading experiment results…</p>}
       {results === null && (
         <p className="text-[13px] text-ink-3 border-l-2 border-line-strong pl-3">

@@ -64,9 +64,14 @@ class TradeExecutionEnv(gym.Env):
         random_start: bool = False,
         start_range: Optional[Tuple[int, int]] = None,
         history_bars: int = 60,
+        order_participation: Optional[float] = None,
     ):
         super().__init__()
 
+        # If set, each episode's order is sized as this fraction of the *expected* volume of the
+        # window (trailing mean volume x horizon), so orders are comparable across liquidity levels
+        # and fillable under the participation cap. Otherwise ``target_inventory`` is used.
+        self.order_participation = order_participation
         self.target_inventory = float(target_inventory)
         self.side = side.upper()
         self.horizon_steps = int(horizon_steps)
@@ -112,6 +117,7 @@ class TradeExecutionEnv(gym.Env):
         self._mean_volume: float = 1.0
         self.window_start: int = 0
         self.dataset_idx: int = 0
+        self.episode_target: float = float(target_inventory)
 
     def reset(
         self,
@@ -135,7 +141,20 @@ class TradeExecutionEnv(gym.Env):
         self.window_start = start
         window = df.iloc[start:start + self.horizon_steps]
 
-        target_inv = options.get("target_inventory", self.target_inventory) if options else self.target_inventory
+        # Causal reference quantities: only bars *before* the window start are used.
+        history = df.iloc[max(0, start - self.history_bars):start]
+        if len(history) >= 5 and "volume" in history.columns:
+            self._mean_volume = float(history["volume"].mean())
+        else:
+            self._mean_volume = float(window["volume"].iloc[0]) if len(window) > 0 else 10000.0
+
+        if options and "target_inventory" in options:
+            target_inv = float(options["target_inventory"])
+        elif self.order_participation:
+            target_inv = float(self.order_participation * self._mean_volume * self.horizon_steps)
+        else:
+            target_inv = self.target_inventory
+        self.episode_target = target_inv
 
         # Reset simulator on the episode window
         sim_state = self.simulator.reset(
@@ -144,13 +163,6 @@ class TradeExecutionEnv(gym.Env):
             side=self.side,
             horizon_steps=self.horizon_steps
         )
-
-        # Causal reference quantities: only bars *before* the window start are used.
-        history = df.iloc[max(0, start - self.history_bars):start]
-        if len(history) >= 5 and "volume" in history.columns:
-            self._mean_volume = float(history["volume"].mean())
-        else:
-            self._mean_volume = float(window["volume"].iloc[0]) if len(window) > 0 else 10000.0
         if len(history) > 0:
             price_col = "price" if "price" in history.columns else "close"
             self._prev_price = float(history[price_col].iloc[-1])

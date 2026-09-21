@@ -42,6 +42,7 @@ from src.api.schemas import (
 )
 from src.api.store import global_store
 from src.api.security import require_api_key
+from src.api.ratelimit import rate_limit
 from src.api import engine
 from src.agents import registry
 from src.evaluation.scenarios import generate_scenario_data, SCENARIOS
@@ -96,7 +97,8 @@ def _metrics_dto(r: Dict[str, Any], counts: Dict[str, int]) -> ExecutionMetricsR
 
 # ── Static Routes (MUST be defined before /{id} parameter routes) ────────────────
 
-@router.post("/simulate", response_model=ExecutionResponse, status_code=status.HTTP_200_OK)
+@router.post("/simulate", response_model=ExecutionResponse, status_code=status.HTTP_200_OK,
+             dependencies=[Depends(rate_limit)])
 def simulate_execution(req: ExecutionSimulateRequest):
     """
     Run one execution on an out-of-sample window of a synthetic market.
@@ -153,7 +155,8 @@ def simulate_execution(req: ExecutionSimulateRequest):
     return response_dto
 
 
-@router.post("/backtest", response_model=BacktestResponse, status_code=status.HTTP_200_OK)
+@router.post("/backtest", response_model=BacktestResponse, status_code=status.HTTP_200_OK,
+             dependencies=[Depends(rate_limit)])
 def run_backtest(req: BacktestRequest):
     """
     Compare policies over several out-of-sample windows of one synthetic market.

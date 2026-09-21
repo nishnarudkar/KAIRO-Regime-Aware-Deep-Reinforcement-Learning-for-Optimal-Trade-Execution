@@ -86,8 +86,10 @@ def main():
     logger.info(f"  Model dir : {cfg.model_dir}")
     logger.info("=" * 60)
 
-    # Use synthetic/fallback data (no real market data required for training smoke test)
-    trainer = DQNTrainer(config=cfg, market_data=None)
+    # Synthetic regime-switching series (train region only); episodes start at random windows.
+    from src.evaluation.scenarios import generate_scenario_data
+    series = generate_scenario_data("normal", n_steps=3000, seed=args.seed)
+    trainer = DQNTrainer(config=cfg, market_data=series.iloc[:2100].reset_index(drop=True))
     result = trainer.train()
 
     logger.info("=" * 60)

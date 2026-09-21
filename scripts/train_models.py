@@ -57,8 +57,8 @@ def _train_one(args):
     train_dfs = [s.train for s in splits.values()]
     hmm = registry.load_hmm() if spec["regime_aware"] else None
     t0 = time.time()
-    agent = P.train_agent(spec["algo"], spec["kind"], train_dfs, hmm, seed=seed,
-                          timesteps=timesteps, cut=len(train_dfs[0]))
+    agent = P.train_agent(spec["algo"], spec["kind"], train_dfs, hmm, seed=seed, timesteps=timesteps,
+                          cut=len(train_dfs[0]), order_participation=P.ORDER_PARTICIPATION)
     agent.save(str(registry.models_dir() / model_id))
     return model_id, time.time() - t0
 
@@ -74,11 +74,12 @@ def _evaluate(n_bars: int):
     loaded = {p: registry.load_policy(p) for p in registry.RL_POLICIES}
     for scen, sp in splits.items():
         starts = P.test_window_starts(sp)
-        base = P.evaluate_baseline_windows(sp.full, starts)
+        base = P.evaluate_baseline_windows(sp.full, starts, order_participation=P.ORDER_PARTICIPATION)
         base["scenario"] = scen
         rows.append(base)
         for policy, lp in loaded.items():
-            env = P.build_env(lp.spec["kind"], [sp.full], hmm if lp.spec["regime_aware"] else None)
+            env = P.build_env(lp.spec["kind"], [sp.full], hmm if lp.spec["regime_aware"] else None,
+                              order_participation=P.ORDER_PARTICIPATION)
             res = P.evaluate_agent_windows(lp.agent, env, starts, policy)
             res["scenario"] = scen
             rows.append(res)
@@ -140,7 +141,7 @@ def main():
             "train": "random 30-bar windows from the train region (first 70%) of all six scenarios",
             "evaluation": "non-overlapping 30-bar windows over the test region (last 30%), paired vs TWAP",
             "data_seed_base": DATA_SEED, "n_bars": args.n_bars, "horizon_steps": P.HORIZON_STEPS,
-            "target_inventory": P.TARGET_INVENTORY,
+            "order_participation": P.ORDER_PARTICIPATION, "hmm_features": P.HMM_FEATURES,
         },
         "models": {
             mid: {"timesteps": args.timesteps, "seed": args.seed, "trained_at": now,

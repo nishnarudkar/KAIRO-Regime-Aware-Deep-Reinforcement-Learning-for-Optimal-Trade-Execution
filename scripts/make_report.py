@@ -77,7 +77,9 @@ def main() -> None:
         f"* Scenarios: {', '.join(cfg['scenarios'])}",
         f"* Seeds ({len(cfg['seeds'])}): {cfg['seeds']}",
         f"* Training steps per learned model: {cfg['train_timesteps']:,}",
-        f"* Series length: {cfg['n_bars']} bars; horizon {cfg['horizon_steps']} bars; order {int(cfg['target_inventory']):,} shares ({cfg['side']})",
+        f"* Series length: {cfg['n_bars']} bars; horizon {cfg['horizon_steps']} bars; "
+        + (f"order = {100 * cfg['order_participation']:.1f}% of the window's expected volume ({cfg['side']})"
+           if cfg.get('order_participation') else f"order {int(cfg['target_inventory']):,} shares ({cfg['side']})"),
         f"* Test windows per (scenario, seed): {n_windows}; total paired windows: {n_windows * len(cfg['seeds']) * len(cfg['scenarios'])}",
         "",
         "Δ IS = treatment − control in implementation-shortfall bps (negative = treatment cheaper). "

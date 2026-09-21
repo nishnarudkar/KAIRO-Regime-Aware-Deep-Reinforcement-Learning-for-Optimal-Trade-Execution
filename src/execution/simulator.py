@@ -379,7 +379,11 @@ class ExecutionSimulator:
 
         # VWAP Market Price over the steps executed/horizon
         executed_data = self.market_data.iloc[:self.current_step]
-        vwap_market_price = float((executed_data['price'] * executed_data['volume']).sum() / executed_data['volume'].sum())
+        total_volume = float(executed_data['volume'].sum())
+        if total_volume > 0:
+            vwap_market_price = float((executed_data['price'] * executed_data['volume']).sum() / total_volume)
+        else:   # no volume traded in the window: fall back to the plain mean price
+            vwap_market_price = float(executed_data['price'].mean())
 
         # Implementation Shortfall relative to arrival mid price
         sign = 1.0 if self.side == "BUY" else -1.0

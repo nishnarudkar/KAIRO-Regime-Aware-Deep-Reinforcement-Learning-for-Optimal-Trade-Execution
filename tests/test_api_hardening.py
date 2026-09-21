@@ -235,3 +235,21 @@ def test_regime_endpoint_uses_saved_hmm_and_validates_scenario(tiny_models):
     assert abs(sum(body["regime_probabilities"].values()) - 1.0) < 1e-6
     assert body["true_regime"] in body["regime_probabilities"]
     assert client.get("/api/regime/current?scenario=nope").status_code == 400
+
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+
+def test_rate_limit_returns_429_with_retry_after(monkeypatch):
+    from src.api import ratelimit
+
+    monkeypatch.setenv("KAIRO_RATE_LIMIT", "3")
+    ratelimit.reset()
+    body = {"policy": "TWAP", "scenario": "normal", "seed": 1, "horizon_steps": 5}
+    codes = [client.post("/api/execution/simulate", json=body).status_code for _ in range(5)]
+    assert codes[:3] == [200, 200, 200] and codes[3:] == [429, 429]
+    r = client.post("/api/execution/backtest", json={"policies": ["TWAP"], "n_windows": 1})
+    assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1
+    assert client.get("/health").status_code == 200          # cheap routes are not limited
+    monkeypatch.setenv("KAIRO_RATE_LIMIT", "0")
+    ratelimit.reset()
+    assert client.post("/api/execution/simulate", json=body).status_code == 200

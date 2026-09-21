@@ -90,6 +90,7 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
         start_range: Optional[Tuple[int, int]] = None,
         history_bars: int = 60,
         warmup_bars: int = 30,
+        order_participation: Optional[float] = None,
     ):
         super().__init__()
 
@@ -133,6 +134,7 @@ class RegimeAwareTradeExecutionEnv(gym.Env):
             random_start=random_start,
             start_range=start_range,
             history_bars=history_bars,
+            order_participation=order_participation,
         )
 
         # Causal inference engine — initialised lazily after HMM check

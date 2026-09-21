@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from src.agents import registry
 import numpy as np
@@ -31,8 +31,12 @@ from src.evaluation.scenarios import SCENARIOS
 router = APIRouter(tags=["Platform Metadata"])
 
 
-def results_dir() -> Path:
-    return Path(os.environ.get("KAIRO_RESULTS_DIR", registry.REPO_ROOT / "results"))
+SUITES = {"default": "", "long_horizon": "long_horizon", "real_data": "real_data"}
+
+
+def results_dir(suite: str = "default") -> Path:
+    base = Path(os.environ.get("KAIRO_RESULTS_DIR", registry.REPO_ROOT / "results"))
+    return base / SUITES[suite] if SUITES.get(suite) else base
 
 
 @router.get("/api/baselines", response_model=List[BaselineStrategyResponse])
@@ -80,9 +84,11 @@ def _records(path: Path) -> List[dict]:
 
 
 @router.get("/api/experiments/results", response_model=ExperimentResultsResponse)
-def experiment_results():
+def experiment_results(suite: str = Query(default="default", description="default | long_horizon | real_data")):
     """Recorded research results: per-strategy summary, paired comparisons and HMM validation."""
-    rdir = results_dir()
+    if suite not in SUITES:
+        raise HTTPException(status_code=400, detail=f"Unknown suite '{suite}'. Valid: {list(SUITES)}")
+    rdir = results_dir(suite)
     if not (rdir / "window_results.csv").exists():
         raise HTTPException(status_code=404, detail="No experiment results found. Run scripts/run_experiments.py.")
     cfg = {}

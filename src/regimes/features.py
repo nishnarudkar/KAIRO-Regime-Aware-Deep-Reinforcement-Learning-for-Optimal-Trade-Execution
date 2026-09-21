@@ -80,6 +80,25 @@ class RegimeFeatureEngine:
         if "hl_spread_proxy" not in feat.columns:
             feat["hl_spread_proxy"] = (feat["high"] - feat["low"]) / feat["close"]
 
+        # 6a. Quoted spread in bps (uses bid/ask or a spread column when available, otherwise the
+        #     high-low proxy) and log-scale versions of the skewed volatility / spread features.
+        if "spread_bps" not in feat.columns:
+            if "bid" in feat.columns and "ask" in feat.columns:
+                feat["spread_bps"] = 1e4 * (feat["ask"] - feat["bid"]) / feat["close"]
+            elif "spread" in feat.columns:
+                feat["spread_bps"] = 1e4 * feat["spread"] / feat["close"]
+            else:
+                feat["spread_bps"] = 1e4 * feat["hl_spread_proxy"]
+        eps = 1e-8
+        for src, dst in (("realized_vol_5m", "log_realized_vol_5m"), ("realized_vol_15m", "log_realized_vol_15m"),
+                         ("realized_vol_60m", "log_realized_vol_60m"), ("parkinson_vol", "log_parkinson_vol"),
+                         ("spread_bps", "log_spread_bps")):
+            if dst not in feat.columns:
+                feat[dst] = np.log(feat[src].clip(lower=eps))
+        if "log_volume_ratio_60m" not in feat.columns:
+            vol_ma_60 = feat["volume"].rolling(window=60, min_periods=5).mean()
+            feat["log_volume_ratio_60m"] = np.log((feat["volume"] + 1.0) / (vol_ma_60 + 1.0))
+
         # 6. Amihud Illiquidity Proxy: |r_t| / (Volume_t * Close_t) * 1e6
         if "amihud_illiquidity" not in feat.columns:
             dollar_vol = feat["volume"] * feat["close"]

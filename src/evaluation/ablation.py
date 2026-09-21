@@ -76,6 +76,7 @@ class ShuffledRegimeEnv(gym.Env):
         random_start: bool = False,
         start_range=None,
         history_bars: int = 60,
+        order_participation=None,
     ):
         super().__init__()
 
@@ -101,6 +102,7 @@ class ShuffledRegimeEnv(gym.Env):
             random_start=random_start,
             start_range=start_range,
             history_bars=history_bars,
+            order_participation=order_participation,
         )
 
     def _random_regime_features(self) -> np.ndarray:

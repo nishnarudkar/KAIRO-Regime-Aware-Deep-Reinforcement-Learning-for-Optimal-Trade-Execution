@@ -1,42 +1,40 @@
-# Project Status & Pre-Implementation Risk Audit
+# Project Status
 
-## Milestone Progress
+## Milestones
 
-| Milestone | Status | Description |
+| Stage | Status | Notes |
 |---|---|---|
-| **Phase 1: Architecture & MDP Design** | **COMPLETED** | Repository layout, MDP definitions, research plan, configuration schemas, abstract module interfaces. |
-| **Phase 2: Data Pipeline & Features** | **COMPLETED** | Data loaders, 6 causal features, order book metrics, lookahead prevention unit tests. |
-| **Phase 3: Execution Simulator** | **COMPLETED** | ExecutionSimulator with Almgren-Chriss permanent & temporary market impact, spread cost, and terminal penalty. |
-| **Phase 4: Gymnasium Execution MDP** | **COMPLETED** | `TradeExecutionEnv` Gymnasium environment, discrete action space, multi-term modular reward function. |
-| **Phase 5: Baseline Strategies** | **COMPLETED** | Standardized TWAP, VWAP, and POV execution strategies for benchmark comparison. |
-| **Phase 6: Regime Detection Engine** | **COMPLETED** | 4-State Gaussian HMM with canonical state reordering, online forward filtering (zero lookahead), and evaluation plots. |
-| **Phase 7: DRL Agent — Stage 6 (DQN, no regime)** | **IN PROGRESS** | `src/agents/dqn_agent.py`, `src/agents/trainer.py`, `src/agents/evaluator.py`, `scripts/train.py`, `scripts/evaluate.py`, `config/dqn.yaml`, `tests/test_dqn_agent.py`. SB3 DQN with MLflow tracking, save/load, full evaluation suite. Awaiting test run. |
-| **Phase 8: Regime-Aware DQN (Stage 7)** | **PLANNED** | `RegimeAwareTradeExecutionEnv`, Model A vs B A/B experiment, `docs/research_questions.md`. |
-| **Phase 9: Research Experiment Suite (Stage 8)** | **PLANNED** | Ablation studies, shuffled-regime control, experiment runner, CI tables. |
-| **Phase 10: FastAPI Backend (Stage 10)** | **PLANNED** | Full REST API for simulation, backtest, regime, model endpoints. |
-| **Phase 11: Next.js Product UI (Stage 11)** | **PLANNED** | 5-screen frontend: New Execution, Monitor, Analytics, Comparison, Research. |
-| **Phase 12: Docker + Audit (Stages 14–15)** | **PLANNED** | Dockerization, research reproducibility audit. |
+| 0–5 Architecture, simulator, environment, data pipeline, HMM, baselines | Complete | VWAP was a copy of TWAP until Stage 16; now a real ex-ante volume-profile strategy |
+| 6–7 DQN and regime-aware DQN | Complete | Trained on random windows (Stage 16); regime filter warm-started |
+| 8–9 Experiment suite and PPO extension | Complete | Rebuilt on the unified protocol; 8 seeds × 6 scenarios × 30 paired windows |
+| 10 FastAPI backend | Complete | Serves trained checkpoints; SQLite persistence; API-key-protected order routes |
+| 11 Next.js UI | Complete | Redesigned; shows real model status, paired statistics, recorded results |
+| 12 Decision explanations | Complete | Explains the trained network; labels match the environment |
+| 13 Risk gates / paper trading | Complete (mock mode) | `/paper` and `/kill-switch` require `KAIRO_API_KEY` |
+| 14 Docker | Complete | Python 3.12, non-root, build-time API URL, persistent volume |
+| 15 Research audit | Rewritten | `docs/research_audit.md` reports measured results |
+| **16 Validity overhaul** | **Complete** | Realistic data, random-window training, paired statistics, honest serving, CI |
 
----
+## What the research shows
 
-## Assumptions & Validation Status
-1. **Market Impact Model Parameters:** Almgren-Chriss power-law parameters parameterized in `config/environment.yaml` and validated in `tests/test_execution_simulator.py`.
-2. **HMM State Stability:** Hidden Markov Model regime predictions canonicalized (Low Vol -> Normal -> High Vol -> Stress) and filtered using exact HMM Forward algorithm ($P(S_t \mid X_{1:t})$).
-3. **Discrete Action Granularity:** Discrete inventory fractions $\{0\%, 10\%, 25\%, 50\%\}$ validated in `TradeExecutionEnv` rollout tests.
+On the synthetic markets, regime-aware RL has **no robust advantage**: learned policies are about level with TWAP and
+slightly behind POV, and the PPO gain from regime features is reproduced by a shuffled-regime control. See
+[`docs/research_audit.md`](docs/research_audit.md).
 
----
+## Leakage controls (all covered by tests)
 
-## Potential Data Leakage Risks & Controls (All Mitigated & Tested)
+| Risk | Control |
+|---|---|
+| Global feature scaling | Scalers fitted on the train split only |
+| Lookahead volatility | Backward-looking windows only (`volatility` column is a causal 20-bar estimate) |
+| HMM regime leakage | HMM fitted on train only; online forward filter; warm-start uses past bars only |
+| Volume / price reference | Computed from bars before the episode window |
+| VWAP profile | Estimated from history before the window |
+| Train/test contamination | Chronological 70/30 split; training windows never touch the test region |
 
-| Leakage Risk | Mechanism | Mitigation / Prevention Strategy | Status |
-|---|---|---|---|
-| **Global Feature Normalization** | Scaling features using global mean/std across train and test sets. | Fit scalers (`RobustScaler`) STRICTLY on training split; apply `.transform()` on test/val windows. | **MITIGATED & TESTED** |
-| **Lookahead Volatility Estimators** | Centered rolling windows or future return calculations. | Enforce backward-looking windows ONLY (`df['log_return'].rolling(window).std()`). | **MITIGATED & TESTED** |
-| **HMM Regime Leakage** | Fitting HMM on the complete dataset including test periods. | Fit HMM on historical train split ONLY; use online forward filtering ($P(S_t \mid X_{1:t})$) for inference. | **MITIGATED & TESTED** |
-| **Replay Buffer Pollution** | RL agent experiencing test-set transitions during training. | Complete physical separation of training market datasets and testing market datasets. | **MITIGATED** |
+## Open items
 
----
-
-## Current Overall Completion: ~75%
-- Core software modules, simulator engine, Gymnasium environment, baselines, and regime detection engine are 100% operational and backed by **45 unit tests**.
-- Next milestone: Training the Regime-Aware Deep Reinforcement Learning Agent.
+* Validate on real market data (the Alpaca data client exists but the experiments are synthetic-only).
+* Longer training / hyperparameter search; other horizons and order sizes.
+* Per-regime analysis of where an agent could beat POV; better handling of unfillable orders.
+* Real (non-mock) Alpaca paper execution behind the risk gates.

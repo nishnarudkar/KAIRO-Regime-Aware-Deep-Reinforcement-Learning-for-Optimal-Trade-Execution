@@ -6,6 +6,7 @@ import os
 # MLflow's file store (used by the training-related tests).
 os.environ.setdefault("KAIRO_DB_PATH", ":memory:")
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+os.environ.setdefault("KAIRO_RATE_LIMIT", "0")   # tests hammer the API; a dedicated test enables the limiter
 
 
 import pytest

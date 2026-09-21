@@ -73,11 +73,12 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
     timesteps = job["timesteps"]
     t0 = time.time()
 
+    horizon, part = job["horizon"], job["order_participation"]
     df = generate_scenario_data(scenario, n_steps=job["n_bars"], seed=seed)
     split = P.make_split(df)
-    starts = P.test_window_starts(split, max_windows=job.get("max_windows"))
+    starts = P.test_window_starts(split, horizon=horizon, max_windows=job.get("max_windows"))
 
-    frames = [P.evaluate_baseline_windows(split.full, starts)]
+    frames = [P.evaluate_baseline_windows(split.full, starts, horizon=horizon, order_participation=part)]
     hmm = P.fit_hmm([split.train])
     hmm_row: Dict[str, Any] = {"scenario": scenario, "seed": seed}
 
@@ -90,9 +91,10 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
         for name in names:
             algo, kind = P.LEARNED_SPECS[name]
             try:
-                agent = P.train_agent(algo, kind, [split.train], hmm, seed=seed,
-                                      timesteps=timesteps, cut=split.cut)
-                env = P.build_env(kind, [split.full], hmm, shuffle_seed=seed + 5000)
+                agent = P.train_agent(algo, kind, [split.train], hmm, seed=seed, timesteps=timesteps,
+                                      cut=split.cut, horizon=horizon, order_participation=part)
+                env = P.build_env(kind, [split.full], hmm, shuffle_seed=seed + 5000, horizon=horizon,
+                                  order_participation=part)
                 frames.append(P.evaluate_agent_windows(agent, env, starts, name, seed=seed))
             except Exception as exc:
                 logger.error("%s failed for %s/%s: %s", name, scenario, seed, exc)
@@ -201,6 +203,8 @@ def run_experiment_suite(
     n_bars: int = P.N_BARS,
     n_jobs: int = 1,
     max_windows: Optional[int] = None,
+    horizon: int = P.HORIZON_STEPS,
+    order_participation: Optional[float] = P.ORDER_PARTICIPATION,
 ) -> ResultsAggregator:
     """
     Execute the full research experiment suite.
@@ -216,17 +220,22 @@ def run_experiment_suite(
         n_bars: Length of each synthetic series.
         n_jobs: Parallel worker processes over (scenario, seed) jobs.
         max_windows: Optionally cap the number of test windows (smoke tests).
+        horizon: Execution horizon in bars (test windows are non-overlapping blocks of this length).
+        order_participation: Order size as a fraction of the window's expected volume (None = fixed
+            100,000 shares).
     """
     scenarios = scenarios or DEFAULT_SCENARIOS
     seeds = seeds or DEFAULT_SEEDS
     os.makedirs(results_dir, exist_ok=True)
 
     jobs = [dict(scenario=s, seed=sd, timesteps=train_timesteps, n_bars=n_bars,
-                 run_ablation=run_ablation, include_ppo=include_ppo, max_windows=max_windows)
+                 run_ablation=run_ablation, include_ppo=include_ppo, max_windows=max_windows,
+                 horizon=horizon, order_participation=order_participation)
             for s in scenarios for sd in seeds]
 
     config = dict(scenarios=scenarios, seeds=seeds, train_timesteps=train_timesteps, n_bars=n_bars,
-                  horizon_steps=P.HORIZON_STEPS, target_inventory=P.TARGET_INVENTORY, side=P.SIDE,
+                  horizon_steps=horizon, order_participation=order_participation,
+                  target_inventory=P.TARGET_INVENTORY, side=P.SIDE,
                   train_ratio=P.TRAIN_RATIO, run_ablation=run_ablation, include_ppo=include_ppo,
                   max_windows=max_windows, n_jobs=n_jobs)
     with open(os.path.join(results_dir, "run_config.json"), "w") as f:

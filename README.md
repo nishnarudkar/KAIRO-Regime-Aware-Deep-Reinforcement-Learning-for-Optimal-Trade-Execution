@@ -1,224 +1,188 @@
 # KAIRO — Regime-Aware Deep Reinforcement Learning for Optimal Trade Execution
 
-A research-grade framework and production platform for executing large institutional orders using Markov Decision Processes (MDP), Hidden Markov Model (HMM) Market Regime Detection, and Regime-Aware Deep Reinforcement Learning (DRL).
+A research framework and demo platform for executing large parent orders with Markov Decision Processes, Hidden
+Markov Model regime detection and deep reinforcement learning (DQN / PPO), evaluated against TWAP, VWAP and POV on a
+regime-switching **synthetic** market.
+
+> **Read this first.** On the synthetic markets used here, regime-aware RL does **not** show a robust advantage. Learned
+> policies are about level with TWAP and slightly behind POV, and the apparent gains from regime information do not
+> survive a shuffled-regime control. See [`docs/research_audit.md`](docs/research_audit.md) for the measured results
+> and their limits. All data is synthetic; nothing here is evidence about live trading.
 
 ---
 
-## 🎯 Core Research Questions
+## Research questions
 
-> **RQ1:** Does Deep Reinforcement Learning outperform conventional execution baselines (TWAP, VWAP, POV)?  
-> **RQ2:** Does causally-inferred market regime information improve RL trade execution quality?  
-> **RQ3:** Does regime-awareness improve execution robustness during market stress and regime transitions?  
-> **RQ4:** Is the regime-aware performance improvement algorithm-class-agnostic (reproducible across both value-based DQN and policy-gradient PPO)?
+> **RQ1** Does deep RL outperform TWAP, VWAP and POV?
+> **RQ2** Does causally inferred regime information improve RL execution?
+> **RQ3** Does regime-awareness help in turbulent markets and beat a shuffled-regime control?
+> **RQ4** Is the effect the same for value-based (DQN) and policy-gradient (PPO) agents?
 
----
-
-## 📊 Project Status & Progress Tracker
-
-**120 / 120 Unit Tests Passing ✅ | All Stages 0–15 Complete**
-
-| Stage | Name | Status | Description / Key Deliverables |
-|---|---|---|---|
-| **Stage 0** | Repository Architecture | ✅ Complete | Directory layout, YAML config schemas, abstract base classes |
-| **Stage 1** | Execution Simulator | ✅ Complete | `ExecutionSimulator`, Almgren-Chriss & Linear impact models, partial fills, terminal penalties |
-| **Stage 2** | Gymnasium MDP Environment | ✅ Complete | `TradeExecutionEnv`, `ModularExecutionReward`, reproducible seeding |
-| **Stage 3** | Data Pipeline | ✅ Complete | Alpaca API ingestion, chronological train/test splitting, zero lookahead validation |
-| **Stage 4** | Market Regime Engine | ✅ Complete | Gaussian HMM, 4 canonical regimes (Low Vol, Normal, High Vol, Stress), `CausalRegimeInference` forward filter |
-| **Stage 5** | Baseline Strategies | ✅ Complete | TWAP, VWAP, and POV benchmark execution strategies + `BaselineRunner` |
-| **Stage 6** | DQN Baseline Agent | ✅ Complete | `DQNAgent` (SB3 DQN), `evaluate_agent`, MLflow tracking integration |
-| **Stage 7** | Regime-Aware DQN | ✅ Complete | `RegimeAwareTradeExecutionEnv` (12-dim state), Model A vs Model B A/B experiment |
-| **Stage 8** | Research Experiment Suite | ✅ Complete | 6 synthetic scenarios, 3 random seeds, shuffled-regime control ablation, `ResultsAggregator` |
-| **Stage 9** | PPO Extension | ✅ Complete | `PPOAgent`, `ppo.yaml`, 4-model multi-algorithm comparison (DQN vs PPO), RQ4 methodology |
-| **Stage 10**| FastAPI Backend Service | ✅ Complete | REST API (`/simulate`, `/backtest`, `/{id}`, `/regime/current`, `/models`, `/baselines`), OpenAPI docs |
-| **Stage 11**| Next.js Product UI | ✅ Complete | Adaptive Execution Intelligence frontend dashboard (5 interactive tabs, Recharts analytics) |
-| **Stage 12**| Decision Explanation Layer| ✅ Complete | Post-hoc feature contribution (`DecisionExplainer`), regime influence scoring, `docs/explanations.md` |
-| **Stage 13**| Alpaca Paper Trading | ✅ Complete | `ExecutionRiskGate` (4 safety gates, kill switch), `AlpacaPaperExecutor`, `/paper` API endpoint |
-| **Stage 14**| Docker Packaging | ✅ Complete | Multi-container stack (`docker-compose.yml` for FastAPI, Next.js UI, MLflow), `docs/docker_deployment.md` |
-| **Stage 15**| Research & Audit | ✅ Complete | Formal research & reproducibility audit (`docs/research_audit.md`) |
+| | Result (8 seeds × 6 scenarios × 30 paired windows, 100k training steps) |
+|---|---|
+| RQ1 | Not robust: regime-aware agents beat TWAP by ~1.6–1.8 bps of ~23; no learned policy beats POV |
+| RQ2 | No clear evidence (DQN −0.25 bps, CI includes 0; PPO −3.6 bps, explained by the control) |
+| RQ3 | Not supported: regime-aware PPO does not beat its shuffled control |
+| RQ4 | No consistent effect across algorithms |
 
 ---
 
-## 🖼️ UI Dashboard Screenshots
+## Project status
 
-The Next.js 14 + TypeScript Product UI provides interactive trade execution intelligence across 5 core views:
+**180+ automated tests, CI on every push.** Stages 0–15 (simulator, environment, HMM, baselines, agents, experiments,
+API, UI, explanations, paper-trading gates, Docker) are implemented; Stage 16 rebuilt the experimental foundation
+after an audit found the original results invalid (details in the audit).
 
-| View | Screenshot | Key Features |
-|---|---|---|
-| **1. New Execution** | ![New Execution](screenshots/01_new_execution.png) | Order parameters, strategy cards (TWAP, VWAP, POV, DQN, Regime-Aware DQN/PPO), scenario selector |
-| **2. Execution Monitor** | ![Execution Monitor](screenshots/02_execution_monitor.png) | Real-time fill %, remaining inventory, implementation shortfall, average fill price & VWAP slippage |
-| **3. Execution Analytics** | ![Execution Analytics](screenshots/03_execution_analytics.png) | Inventory decay trajectory, market price curve, fill size distribution, and fee breakdowns |
-| **4. Strategy Comparison** | ![Strategy Comparison](screenshots/04_strategy_comparison.png) | Multi-policy backtest benchmark, top strategy highlight, IS bar chart, and results pivot table |
-| **5. Research & Regimes** | ![Research & Regimes](screenshots/05_research_regimes.png) | Real-time Causal HMM regime detector, 4-regime posterior probabilities, and research question details |
+| Area | State |
+|---|---|
+| Synthetic market | Regime-switching, realistic per-minute scale, zero drift, bid/ask, causal volatility |
+| Environment | Random-window episodes, causal observations, well-scaled state and reward, warm-started regime filter |
+| Baselines | TWAP, VWAP (real ex-ante volume profile), POV |
+| Agents | DQN, PPO, regime-aware variants and shuffled-regime controls; trained once and served from `models/` |
+| Experiments | Paired multi-window evaluation, bootstrap CIs, Wilcoxon tests, seed-level replication; results in `results/` |
+| API | Persistent (SQLite), API-key-protected order routes, restricted CORS, honest model status, errors surfaced |
+| UI | Next.js dashboard showing real model status, paired statistics and the recorded experiment results |
+| Packaging | Complete `requirements.txt`, Docker (Python 3.12, non-root), compose with build-time API URL, GitHub Actions CI |
 
 ---
 
-## 🏗️ Architecture Overview
+## Screenshots
+
+| View | Screenshot |
+|---|---|
+| **Order ticket** | ![Order ticket](screenshots/01_new_execution.png) |
+| **Monitor** | ![Monitor](screenshots/02_execution_monitor.png) |
+| **Analytics** | ![Analytics](screenshots/03_execution_analytics.png) |
+| **Strategy comparison** (paired, with CIs) | ![Comparison](screenshots/04_strategy_comparison.png) |
+| **Research** (regime detector + recorded results) | ![Research](screenshots/05_research_regimes.png) |
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart TD
-    Data[Market Data / Alpaca Stream] --> FeatureEng[Regime Feature Pipeline]
-    FeatureEng --> HMM[Causal HMM Regime Detector]
-    FeatureEng --> StateBuilder[MDP State Formulator]
-    HMM --> StateBuilder
-    StateBuilder --> Agent[Regime-Aware DRL Policy: DQN / PPO]
-    Agent --> ActionSpace[Action Selection: Discrete Inventory %]
-    ActionSpace --> ExecEnv[ExecutionSimulator]
-    ExecEnv --> RewardEngine[ModularExecutionReward]
-    RewardEngine --> Agent
-    ExecEnv --> Baselines[TWAP / VWAP / POV Baselines]
-    ExecEnv --> Metrics[Implementation Shortfall Analytics]
-    Metrics --> API[FastAPI Backend Engine]
+    Gen[Regime-switching synthetic market] --> Feat[Causal regime features]
+    Feat --> HMM[Causal HMM filter]
+    Gen --> Env[Execution environment: random windows]
+    HMM --> Env
+    Env --> Agent[DQN / PPO, plain or regime-aware]
+    Agent --> Sim[ExecutionSimulator: bid/ask, impact, fees]
+    Sim --> Reward[Reward in bps]
+    Reward --> Agent
+    Sim --> Metrics[Implementation shortfall]
+    Base[TWAP / VWAP / POV] --> Sim
+    Metrics --> Stats[Paired windows, bootstrap CI, Wilcoxon]
+    Agent --> Models[(models/ checkpoints)]
+    Models --> API[FastAPI]
+    Stats --> API
+    API --> UI[Next.js dashboard]
 ```
 
 ---
 
-## 🚀 Quickstart & Server Execution
-
-### 1. Installation & Environment Setup
+## Quickstart
 
 ```bash
-# Clone repository
-git clone https://github.com/nishnarudkar/KAIRO-Regime-Aware-Deep-Reinforcement-Learning-for-Optimal-Trade-Execution.git
-cd regime-aware-trade-execution
-
-# Create and activate virtual environment
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS / Linux
-
-# Install dependencies
-pip install -r requirements.txt
+venv\Scripts\activate            # Windows   (source venv/bin/activate on macOS / Linux)
+pip install -r requirements.txt  # Python 3.11+
 ```
 
-### 2. Run Test Suite (108 Unit Tests)
+### Run the tests
 
 ```bash
-# Run full unit test suite across all modules
-$env:PYTHONPATH='.'; .\venv\Scripts\pytest tests/ -v --tb=short
+python -m pytest -q
 ```
 
-### 3. Launch FastAPI Backend Server
+### Train the served models and run the API
 
 ```bash
-# Start FastAPI backend server with hot-reload
-uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
+python scripts/train_models.py                                   # ~11 min; writes models/*.zip + registry.json
+uvicorn src.api.main:app --host 127.0.0.1 --port 8000            # docs at /docs
 ```
 
-- **Interactive Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- **ReDoc Specification**: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+The repository already contains trained checkpoints and results, so you can start the API directly. Learned
+policies without a checkpoint return `503` rather than a fabricated result.
 
-### 4. Run CLI Experiments & Demos
+### Run the dashboard
 
 ```bash
-# Run Stage 8 Full Research Experiment Suite (6 scenarios, 3 seeds)
-python scripts/run_experiments.py --seeds 42 123 777
-
-# Run Stage 9 Multi-Algorithm PPO Comparison (4 models head-to-head)
-python scripts/run_ppo_experiment.py --timesteps 50000 --seed 42
-
-# View MLflow experiment dashboard
-mlflow ui
+cd frontend
+npm install
+npm run dev                                                      # http://localhost:3000
 ```
+
+### Reproduce the research results
+
+```bash
+python scripts/run_experiments.py --seeds 42 123 777 2024 31415 7 99 1234 --timesteps 100000 --jobs 16
+python scripts/make_report.py                                    # writes results/REPORT.md from the result files
+```
+
+### Docker
+
+```bash
+docker compose up -d --build     # backend :8000, dashboard :3000, MLflow :5000
+```
+
+See [`docs/docker_deployment.md`](docs/docker_deployment.md) and `.env.example` for configuration.
 
 ---
 
-## ⚡ FastAPI Endpoint Reference (`Stage 10`)
+## API
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/execution/simulate` | Execute a single order simulation (TWAP, VWAP, POV, DQN, Regime DQN, PPO, Regime PPO) |
-| `POST` | `/api/execution/backtest` | Run multi-policy backtest comparison across market scenarios |
-| `GET` | `/api/execution/{id}` | Query execution record summary by unique UUID |
-| `GET` | `/api/execution/{id}/metrics` | Query detailed execution quality metrics (IS bps, cost, fill %, VWAP slip) |
-| `GET` | `/api/execution/{id}/trajectory` | Query step-by-step price, inventory, and action trajectories |
-| `POST`| `/api/execution/paper` | Validate order against pre-trade risk gates & route to Alpaca Paper Trading |
-| `GET` | `/api/execution/risk-status` | Query active pre-trade risk gate configuration & emergency kill switch state |
-| `POST`| `/api/execution/kill-switch` | Trigger or reset emergency halt kill switch |
-| `GET` | `/api/regime/current` | Detect current market regime using causal HMM online forward filter |
-| `GET` | `/api/baselines` | List conventional execution baseline strategies |
-| `GET | `/api/models` | List available DRL model metadata |
-| `GET` | `/api/experiments` | List research experiment suites and scenarios |
-| `GET` | `/health` | Service health check |
+| `POST` | `/api/execution/simulate` | One policy on an out-of-sample window (`503` if the learned policy is untrained) |
+| `POST` | `/api/execution/backtest` | Several policies over 1–30 identical windows; mean, CI, paired difference vs TWAP; `errors` for failures |
+| `GET` | `/api/execution/{id}` `/metrics` `/trajectory` | Stored results (SQLite) |
+| `GET` | `/api/execution/{id}/explain?step=N` | Explanation of the trained network's decision at a step |
+| `POST` | `/api/execution/explain` | Explain a decision for a given state (trained policies only) |
+| `POST` | `/api/execution/paper` 🔒 | Route a slice through the risk gates (mock paper executor) |
+| `POST` | `/api/execution/kill-switch` 🔒 | Emergency halt |
+| `GET` | `/api/execution/risk-status` | Risk-gate configuration |
+| `GET` | `/api/regime/current` | Causal HMM regime at the latest bar |
+| `GET` | `/api/models` | Trained status, training steps and held-out evaluation per model |
+| `GET` | `/api/experiments` / `/api/experiments/results` | Experiment status and the recorded results |
+| `GET` | `/api/baselines`, `/health` | Baselines, liveness |
+
+🔒 requires `X-API-Key` matching `KAIRO_API_KEY`; refused when no key is configured. Full reference:
+[`docs/fastapi_backend.md`](docs/fastapi_backend.md).
 
 ---
 
-## 🛠 Key Implemented Modules
-
-### 1. `ExecutionSimulator` — `src/execution/simulator.py`
-Market replay engine enforcing strict temporal causality (zero lookahead) with Almgren-Chriss & Linear market-impact models, partial fills, commissions, and terminal penalties.
-
-### 2. `RegimeAwareTradeExecutionEnv` — `src/environment/regime_env.py`
-Gymnasium MDP environment with 12-dimensional state vector $[I_t, T_{\text{rem}}, \Delta P_t, \sigma_t, S_{\text{bid-ask}}, V_t, \overline{V}, S_t^{\text{regime}}, P(S_t=0), \dots, P(S_t=3)]$.
-
-### 3. `MarketHMM` & `CausalRegimeInference` — `src/regimes/`
-Gaussian Hidden Markov Model with 4 canonical market regimes (Low Vol, Normal, High Vol, Stress) fitted exclusively on training data, evaluated online using the forward algorithm $P(S_t = k \mid X_{1:t})$.
-
-### 4. DRL Agent Wrappers — `src/agents/`
-- **`DQNAgent`**: Off-policy Q-learning wrapper over Stable-Baselines3 DQN.
-- **`PPOAgent`**: On-policy policy-gradient wrapper over Stable-Baselines3 PPO (`config/ppo.yaml`).
-
-### 5. `ResultsAggregator` — `src/evaluation/metrics.py`
-Aggregates single-run execution records into summary pivot tables, calculates implementation shortfall deltas, and exports structured CSV/JSON/Parquet outputs.
-
----
-
-## 📁 Repository Structure
+## Repository layout
 
 ```
-regime-aware-trade-execution/
-├── config/                   # Configuration files
-│   ├── environment.yaml      # MDP & simulator settings
-│   ├── dqn.yaml              # DQN hyperparameter config
-│   ├── ppo.yaml              # PPO hyperparameter config
-│   └── regimes.yaml          # HMM & feature config
-├── docs/                     # Research & API documentation
-│   ├── mdp.md                # Formal MDP formulation
-│   ├── execution_model.md    # Market impact & simulator specifications
-│   ├── market_regimes.md     # HMM regime detection methodology
-│   ├── experiments.md        # Stage 8 research experiment design
-│   ├── ppo_extension.md      # Stage 9 PPO extension & RQ4 analysis
-│   ├── fastapi_backend.md    # Stage 10 FastAPI backend reference
-│   ├── frontend_ui.md        # Stage 11 Next.js frontend UI documentation
-│   ├── explanations.md       # Stage 12 Decision explanation layer documentation
-│   ├── alpaca_paper_trading.md # Stage 13 Risk gates & Alpaca paper trading documentation
-│   ├── docker_deployment.md  # Stage 14 Docker containerization documentation
-│   ├── research_audit.md     # Stage 15 Formal research & reproducibility audit
-│   └── research_questions.md # Formal research questions (RQ1–RQ4)
-├── frontend/                 # Next.js 14 TypeScript Product UI
-│   ├── src/app/              # App router pages & tab components
-│   ├── src/components/       # UI layout & tabs
-│   └── src/lib/api.ts        # Typed API client for FastAPI backend
-├── scripts/                  # Executable CLI scripts
-│   ├── run_experiments.py    # Full research suite runner
-│   ├── run_ppo_experiment.py # 4-model PPO comparison runner
-│   └── evaluate.py           # Model evaluation script
-├── src/                      # Core python packages
-│   ├── agents/               # DQNAgent, PPOAgent, DecisionExplainer, evaluator
-│   ├── api/                  # FastAPI app, schemas, store, routers
-│   ├── baselines/            # TWAP, VWAP, POV strategies & runner
-│   ├── environment/          # TradeExecutionEnv, RegimeAwareTradeExecutionEnv
-│   ├── execution/            # ExecutionSimulator, risk gates, paper executor
-│   ├── features/             # Feature engineering pipeline
-│   ├── regimes/              # MarketHMM, CausalRegimeInference, scaler
-│   └── utils/                # Logging, seeding, MLflow utilities
-├── tests/                    # Unit test suite (120 tests passing)
-│   ├── test_api.py           # FastAPI TestClient tests
-│   ├── test_explainer.py     # Stage 12 decision explanation tests
-│   ├── test_alpaca_risk_gates.py # Stage 13 risk gates & paper trading tests
-│   ├── test_ppo_agent.py     # PPO agent & experiment tests
-│   ├── test_experiments.py   # Research suite tests
-│   ├── test_regime_aware_env.py
-│   ├── test_regimes.py
-│   └── test_execution_simulator.py
-├── requirements.txt
-└── README.md
+config/            YAML documentation of parameters (checked against the code by a test)
+docs/              methodology, audit, API / UI / Docker references
+frontend/          Next.js + TypeScript dashboard
+models/            trained checkpoints, pooled HMM and registry.json (evaluation of each model)
+results/           experiment outputs (CSV / JSON) and the generated REPORT.md
+scripts/           run_experiments.py, train_models.py, make_report.py, legacy demos
+src/agents/        DQN / PPO wrappers, model registry, explainer
+src/api/           FastAPI app, engine, security, SQLite store, routers
+src/baselines/     TWAP, VWAP (ex-ante volume profile), POV, runner
+src/environment/   TradeExecutionEnv, RegimeAwareTradeExecutionEnv, reward
+src/evaluation/    scenarios, protocol (splits, windows, statistics), experiment runner, ablation control
+src/execution/     ExecutionSimulator, impact models, risk gates, paper executor
+src/regimes/       Gaussian HMM, causal forward filter, features
+tests/             180+ tests (causality, protocol, API hardening, end-to-end)
 ```
 
----
+## Guardrails
 
-## 🔬 Core Guardrails & Hard Rules
+1. **Causality.** Features, volatility, the volume reference, the VWAP profile and regime beliefs at step *t* use only
+   bars up to *t*; tests change the future and assert nothing earlier moves.
+2. **Chronological split.** Train on the first 70%, evaluate on the last 30%; the HMM is fitted on train only.
+3. **Controls.** A shuffled-regime agent with the same input size isolates the value of regime information.
+4. **Paired, replicated evaluation.** Every strategy runs on identical windows; results are replicated over seeds and
+   reported with confidence intervals.
+5. **Honest serving.** No training inside requests; untrained models are labelled and refused; failures are reported.
 
-1. **Strict Anti-Lookahead Causality**: Features, volatility, and regime state at step $t$ consume ONLY observations $X_{1:t}$.
-2. **Chronological Splitting**: Time-series data is split strictly chronologically (70% train / 30% test). **No random shuffling**.
-3. **Control Conditions**: Shuffled/randomized regime controls are evaluated to ensure improvements stem from genuine regime signals.
-4. **Reproducibility**: Deterministic seeding across environment resets, data generators, and DRL policy initialization.
+## Known limitations
+
+Synthetic data only; a single order size and horizon; agents trained for 100–200k steps with one untuned setting;
+the participation cap makes completion impossible in the thin scenarios; Alpaca execution is mock-mode. Details in
+[`docs/research_audit.md`](docs/research_audit.md).

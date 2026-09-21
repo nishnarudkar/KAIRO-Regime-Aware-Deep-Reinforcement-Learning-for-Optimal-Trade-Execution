@@ -99,6 +99,8 @@ class DQNTrainer:
             target_inventory=self.config.target_inventory,
             side=self.config.side,
             horizon_steps=self.config.horizon_steps,
+            # With a long series, train on random windows instead of replaying one path.
+            random_start=(self.market_data is not None and len(self.market_data) > 2 * self.config.horizon_steps),
         )
 
     def train(self) -> Dict[str, Any]:

@@ -55,24 +55,9 @@ def parse_args():
 
 
 def _build_synthetic_data(horizon: int):
-    """Build identical deterministic market data for fair comparison."""
-    import numpy as np
-    import pandas as pd
-
-    rng = np.random.default_rng(42)
-    dates = pd.date_range("2026-01-01 09:30", periods=horizon, freq="1min")
-    prices = 150.0 + np.cumsum(rng.normal(0, 0.05, horizon))
-    volumes = rng.integers(30_000, 80_000, horizon).astype(float)
-    spreads = rng.uniform(0.02, 0.06, horizon)
-    vols = rng.uniform(0.001, 0.003, horizon)
-
-    return pd.DataFrame({
-        "timestamp": dates,
-        "price": prices,
-        "volume": volumes,
-        "spread": spreads,
-        "volatility": vols,
-    })
+    """Deterministic synthetic market (the shared regime-switching generator) for a fair comparison."""
+    from src.evaluation.scenarios import generate_scenario_data
+    return generate_scenario_data("normal", n_steps=max(horizon, 60), seed=42)
 
 
 def _print_comparison(results: list):
