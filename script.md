@@ -14,7 +14,7 @@
 | **Section 2** | Regime Detection Architecture (Causal Gaussian HMM Filter) | 2.0 mins |
 | **Section 3** | Experimental Design V2 & Two-Round Rigor Audit | 3.0 mins |
 | **Section 4** | Empirical Findings Across 3 Evaluation Suites (Main, Long Horizon, Real AAPL) | 2.5 mins |
-| **Section 5** | Full-Stack Platform, API, Safety Gates & MLflow Tracking | 2.0 mins |
+| **Section 5** | Full-Stack Platform, API, Safety Gates & Reproducibility | 2.0 mins |
 | **Section 6** | Conclusion & Future Directions | 1.0 min |
 | **Q&A** | Defensive Q&A Preparation (16+ Anticipated Professor Questions) | 10 mins |
 
@@ -46,7 +46,7 @@
 **Spoken Script:**
 > *"To address optimal execution with Reinforcement Learning, we formulate the execution task as a finite-horizon Markov Decision Process (MDP).*
 >
-> *Our state space preserves strict causality. Plain agents observe a 7-dimensional vector (remaining inventory, remaining time steps, returns, Parkinson volatility, bid-ask spread, order flow imbalance, participation rate). Regime-aware agents observe a 12-dimensional vector concatenating the posterior belief distribution over market regimes from a Hidden Markov Model, transition probabilities, and expected regime duration.*
+> *Our state space preserves strict causality. Plain agents observe a 7-dimensional vector: one-bar log return, a causal 20-bar realized volatility, relative bar volume, the quoted spread in basis points, a log-scaled liquidity proxy, the remaining-inventory fraction, and the remaining-time fraction. Regime-aware agents observe a 12-dimensional vector: the same 7 features, concatenated with the HMM's most-likely regime ID and its 4-way posterior belief distribution \( P(z_t = k \mid x_{1:t}) \) for \( k \in \{\text{low-vol, normal, high-vol, stress}\} \).*
 >
 > *A major innovation in our MDP formulation is our **TWAP-Relative Action Space**. In early RL implementations, action spaces used fixed fractions of remaining inventory (0/10/25/50%), which mathematically could not express TWAP—biasing the agent with a +1.7 bps penalty before training even began! In KAIRO, actions are multiples of the target TWAP slice (\( a \in \{0, 0.5, 1.0, 2.0, 4.0\} \times \text{Slice}_{\text{TWAP}} \)). Playing 1.0× exactly reproduces TWAP, allowing the agent to start at baseline parity and learn true execution alpha.*
 >
@@ -70,7 +70,7 @@
 > \alpha_t(k) = P(x_t \mid z_t = k) \sum_{j=1}^K \alpha_{t-1}(j) A_{jk}
 > \]
 >
-> *Furthermore, every test episode undergoes a 50-bar causal warm-start phase over preceding historical data so that the forward filter initializes with stable regime posterior probabilities rather than cold uniform priors."*
+> *Furthermore, every test episode undergoes a 30-bar causal warm-start phase over preceding historical data so that the forward filter initializes with stable regime posterior probabilities rather than cold uniform priors."*
 
 ---
 
@@ -125,14 +125,14 @@
 ### Slide 6: Production Engineering, Risk Gates & Full-Stack Platform
 *(Time: 10:00 - 12:00)*
 
-**Visual:** Full-Stack Architecture Diagram (FastAPI, Next.js 14 Dashboard, Paper Trading Risk Gates, DagsHub MLflow Tracking).
+**Visual:** Full-Stack Architecture Diagram (FastAPI, Next.js 14 Dashboard, Paper Trading Risk Gates, git-tracked reproducibility pipeline).
 
 **Spoken Script:**
 > *"Beyond empirical research, KAIRO is engineered as a complete production-grade execution platform:*
 >
 > * **Backend & API:** Built with FastAPI, serving trained model checkpoints from `models/` with SQLite persistence. It enforces honest serving—untrained models return HTTP 503 instead of mock data, and order routes are protected via API keys (`X-API-Key`).*
-> * **Pre-Trade Risk Gates:** Our paper execution pipeline validates orders against institutional risk gates: Max Single Order Size, Max Daily Volume Cap, Fat-Finger Price Deviation limits, and an Emergency Kill-Switch.*
-> * **Remote MLflow Tracking:** Integrated with DagsHub MLflow remote logging, capturing real-time loss curves, reward trajectories, hyperparameter configurations, and evaluation metrics.*
+> * **Pre-Trade Risk Gates:** Every paper order slice passes four checks in sequence — an emergency kill switch, a max-single-order-size limit (% of the parent order), a max-notional-value limit, and a price-collar limit measured against the order's arrival price — before it reaches the mock paper executor.*
+> * **Experiment Tracking:** The reproducible research pipeline (`train_models.py`, `run_experiments.py`, `tune_agents.py`) writes its results straight to git-tracked CSV/JSON files, not to MLflow. DagsHub MLflow remote logging is available separately, for interactive single-run experimentation via the earlier Stage 6/7/9 demo scripts.*
 > * **Frontend Dashboard:** A Next.js 14 + TypeScript dashboard featuring 5 real-time views: Order Ticket, Execution Monitor, Performance Analytics with paired confidence intervals, Strategy Comparison, and HMM Regime Exploration.*
 > * **Quality Assurance:** Covered by **198 unit tests** with 100% pass rate, validating causality, zero-lookahead, MDP boundaries, and API security."*
 
@@ -182,9 +182,9 @@
 
 #### Q3: "Why did DQN fail so severely (+27 to +29 bps IS) at the 90-minute horizon while PPO remained stable?"
 * **What the Professor is testing:** Knowledge of value-based (Q-learning) vs. policy-gradient (PPO) generalization, horizon extrapolation, and Q-value overestimation.
-* **Short Answer:** DQN was tuned for 30 steps. Extending to 90 steps causes Q-value overestimation compounding over longer episode horizons, whereas PPO's clipped policy bounds action probability shifts.
+* **Short Answer:** DQN was tuned only at a 30-step horizon; the failure at 90 steps is real and reproducible, but the root cause was not independently diagnosed (`docs/research_audit.md` §7 reports it, not explains it). A plausible hypothesis — not a verified finding — is TD bootstrapping error compounding over a 3x longer horizon; PPO's clipped-ratio updates make it inherently more conservative about drifting from its training distribution.
 * **Detailed Technical Answer:**
-  > *"DQN estimates state-action values \( Q(s, a) \) iteratively via temporal difference bootstrapping. When evaluated at 90 steps (3x its tuning horizon), accumulated Q-value approximation errors cause the policy to choose passive actions early, leaving large inventories at step 90 that trigger severe terminal liquidation penalties (+181 bps in `stress` scenario). PPO's stochastic policy with clipped advantage bounds parameter updates, preventing catastrophic policy degradation."*
+  > *"What we measured: DQN's fill rate drops from ~99% (30-minute suite) to 74.5% at 90 minutes, and the `stress` scenario alone averages 181 bps of shortfall — the agent leaves large inventory unexecuted, which the terminal-liquidation penalty then charges heavily. What we did *not* do is instrument the Q-network to confirm overestimation as the mechanism; that would need TD-error or Q-value-drift logging we did not add. I want to be precise that this is a reported, reproducible failure with a plausible but unverified explanation, not a diagnosed one — which is itself a finding: DQN's policy does not generalize past the horizon it was tuned on, and that should be checked before trusting a checkpoint at a new horizon."*
 
 #### Q4: "How did you fix the fill-rate drop in thin liquidity scenarios between Round 1 and Round 2?"
 * **What the Professor is testing:** Parent order sizing relative to market volume, fill rate normalization, and market impact constraints.
@@ -198,15 +198,15 @@
 
 #### Q5: "How did you improve the HMM Adjusted Rand Index (ARI) from 0.42 to 0.59–0.63 in Round 2?"
 * **What the Professor is testing:** Feature engineering for unsupervised learning, clustering evaluation, and HMM state recovery.
-* **Short Answer:** We conducted a grid search over feature combinations on tuning seeds, identifying Parkinson volatility, normalized spread, and log returns as the optimal emission feature set.
+* **Short Answer:** We conducted a grid search over feature combinations on tuning seeds, identifying log-scaled 15-minute realized volatility, Parkinson volatility, quoted spread and 60-minute relative volume as the optimal emission feature set — dropping raw log returns and the 5-minute/60-minute realized-vol variants that were in the original set.
 * **Detailed Technical Answer:**
-  > *"In `src/regimes/hmm_detector.py`, the initial feature set included raw price momentum and volume ratios that introduced noise into Gaussian covariance matrices. By testing feature combinations against true latent generator regimes, we selected 1-minute log returns, rolling Parkinson volatility (\( \sigma_P \)), and normalized bid-ask spread. This increased regime classification ARI from 0.42 to 0.59–0.63 and accuracy to 55–56%."*
+  > *"In `src/regimes/hmm_model.py` (feature selection lives in `src/evaluation/protocol.py::HMM_FEATURES`), the original feature set (log return, 15-minute realized vol, Parkinson vol, relative volume, high-low spread proxy) introduced noise into the Gaussian emission covariances. A tuning-seed grid search over feature subsets selected four log-scaled features instead: 15-minute realized volatility, Parkinson volatility, quoted spread in bps, and 60-minute relative volume — all log-transformed to tame their skew. This increased regime classification ARI from 0.42 to 0.59–0.63 and accuracy to 55–56%."*
 
 #### Q6: "How do you guarantee that the HMM regime belief contains zero lookahead bias during evaluation?"
 * **What the Professor is testing:** Experimental integrity, data leakage prevention, and causal filtering.
 * **Short Answer:** HMM parameters are fitted strictly on the 70% training split. Online regime posterior probabilities are updated using the HMM Forward Algorithm step-by-step using only observations up to step \( t \).
 * **Detailed Technical Answer:**
-  > *"We enforce zero lookahead bias in three ways: First, `fit()` is called only on `df_train`. Second, at test time, the forward variable \( \alpha_t(k) = P(x_t \mid z_t=k) \sum_j \alpha_{t-1}(j) A_{jk} \) processes observations sequentially up to bar \( t \). Third, we run a causal warm-start over 50 preceding historical bars before episode step 0 to stabilize posterior beliefs without touching future test data. Our unit test suite (`tests/test_regimes.py`) mutates future test bars and asserts that regime beliefs at step \( t \) remain bit-for-bit identical."*
+  > *"We enforce zero lookahead bias in three ways: First, `fit()` is called only on `df_train`. Second, at test time, the forward variable \( \alpha_t(k) = P(x_t \mid z_t=k) \sum_j \alpha_{t-1}(j) A_{jk} \) processes observations sequentially up to bar \( t \). Third, we run a causal warm-start over 30 preceding historical bars before episode step 0 to stabilize posterior beliefs without touching future test data. Our unit test suite (`tests/test_regimes.py`) mutates future test bars and asserts that regime beliefs at step \( t \) remain bit-for-bit identical."*
 
 ---
 
@@ -248,23 +248,24 @@
 * **What the Professor is testing:** Software engineering safety, model registry design, and production readiness.
 * **Short Answer:** The backend enforces a Model Registry (`models/registry.json`). Untrained or missing model checkpoints return an explicit HTTP 503 Service Unavailable error instead of fallback dummy data.
 * **Detailed Technical Answer:**
-  > *"In `src/agents/registry.py` and `src/api/routers/execution.py`, when a simulation request arrives for a specific agent (e.g., `ppo_regime`), the engine queries the model registry. If the checkpoint `.zip` file is missing or `is_trained` flag is false, the system raises `HTTPException(status_code=503, detail='Model ppo_regime is untrained')`. This guarantees honest API responses and prevents silent fallback failures."*
+  > *"In `src/agents/registry.py` and `src/api/routers/execution.py`, when a simulation request arrives for a specific agent (e.g., `ppo_regime`), the engine queries the model registry. If the checkpoint `.zip` file is missing or `is_trained` flag is false, the system raises an `HTTPException` with status 503 and the detail: “Model 'Regime-Aware PPO' has no trained checkpoint. Run python scripts/train_models.py to train and save it.” This guarantees honest API responses and prevents silent fallback failures."*
 
 #### Q12: "How are pre-trade risk gates implemented in your system?"
 * **What the Professor is testing:** Real-world trading risk compliance, fat-finger controls, and emergency protocols.
-* **Short Answer:** Every paper trade order slice must pass through `AlpacaRiskGates` validating maximum slice size, fat-finger price deviation, daily volume cap, and emergency kill-switch status.
+* **Short Answer:** Every paper order slice passes through `ExecutionRiskGate.validate_order()` (`src/execution/risk_gates.py`), which checks the kill switch, a max-single-order-size limit, a max-notional-value limit, and a price-collar deviation limit, in that order, before any slice reaches the mock paper executor.
 * **Detailed Technical Answer:**
-  > *"In `src/execution/risk_gates.py`, before an order slice is routed to the paper execution pipeline, it undergoes four mandatory checks:
-  > 1. **Max Slice Size Gate:** Asserts `slice_quantity <= max_slice_qty` (e.g., 5,000 shares).  
-  > 2. **Fat-Finger Price Gate:** Asserts `|limit_price - mid_price| / mid_price <= 0.03` (3% max deviation).  
-  > 3. **Daily Volume Cap:** Ensures cumulative executed shares do not exceed user-defined daily limits.  
-  > 4. **Kill-Switch Check:** Rejects all outgoing orders instantly if the global kill-switch is triggered (`GET /api/execution/kill-switch`)."*
+  > *"`ExecutionRiskGate.validate_order()` runs four checks in sequence and returns on the first failure:
+  > 1. **Kill switch:** rejects everything while `kill_switch_active` is true.  
+  > 2. **Max single-order size:** the slice cannot exceed `max_single_order_pct` (default 50%) of the parent order's target inventory.  
+  > 3. **Max notional value:** `slice_quantity × current_price` cannot exceed `max_notional_value` (default $1,000,000).  
+  > 4. **Price collar:** `|current_price − arrival_price| / arrival_price` cannot exceed `price_collar_pct` (default 3%) — deviation is measured from the order's *arrival* price, not the current mid, so a slow drift away from the original decision price also trips the gate.  
+  > The kill switch itself is toggled through `POST /api/execution/kill-switch`, which — like `/paper` — requires the `X-API-Key` header; both routes are refused outright if no API key is configured on the server."*
 
 #### Q13: "How is experiment tracking managed across multiple training runs?"
 * **What the Professor is testing:** MLOps, experiment reproducibility, and remote logging integration.
-* **Short Answer:** We integrated DagsHub MLflow remote experiment tracking to log hyperparameters, reward curves, loss metrics, and artifact checkpoints directly to a cloud dashboard.
+* **Short Answer:** `src/utils/dagshub_utils.py` points MLflow at a DagsHub-hosted tracking server when `DAGSHUB_USERNAME`/`DAGSHUB_TOKEN` are set. It is important to be precise about scope: only the legacy single-run demo scripts (`scripts/train.py`, `scripts/run_ab_experiment.py`, `scripts/run_ppo_experiment.py`) call it. The pipeline that produced every result in this presentation — `scripts/train_models.py`, `scripts/run_experiments.py`, `scripts/tune_agents.py` — does not use MLflow at all; it writes plain CSV/JSON/Parquet directly to `results/` and `models/registry.json`, which is what `scripts/make_report.py` reads.
 * **Detailed Technical Answer:**
-  > *"In `src/utils/dagshub_utils.py`, the training and evaluation scripts initialize an MLflow tracking client connected to DagsHub (`https://dagshub.com/nishnarudkar/KAIRO-...mlflow`). During training runs, we log metrics at every 1,000 steps (episode reward, policy loss, value loss, implementation shortfall bps) along with full YAML run configurations. This provides complete visibility and remote auditing capability."*
+  > *"If asked whether our headline numbers are MLflow-tracked: no, and that is deliberate — they come from committed, git-tracked result files (`results/window_results.csv`, `results/paired_comparisons.csv`, etc.) that `make_report.py` turns into a report with no manual step in between. MLflow/DagsHub is available for interactive, single-run experimentation via the older Stage 6/7/9 scripts, which log episode reward and loss curves per run, but it is not part of the reproducible research pipeline this defense is about."*
 
 ---
 
@@ -272,10 +273,14 @@
 
 $$\text{Implementation Shortfall (bps)} = \frac{P_{\text{exec}} - P_0}{P_0} \times 10,000$$
 
-$$\text{TWAP-Relative Action: } v_t = a_t \cdot \left(\frac{Q_0}{T}\right), \quad a_t \in \{0.0, 0.5, 1.0, 2.0, 4.0\}$$
+$$\text{TWAP-Relative Action: } v_t = a_t \cdot \left(\frac{q_t}{T - t}\right), \quad a_t \in \{0.0, 0.5, 1.0, 2.0, 4.0\}$$
+
+*(the slice is remaining inventory \( q_t \) over steps remaining \( T-t \), recomputed every step — not the original order \( Q_0 \) over the original horizon \( T \); the two coincide only at \( t=0 \), and using the adaptive form is what lets action \( a_t=1.0 \) track TWAP exactly even after earlier steps under- or over-filled.)*
 
 $$\text{HMM Forward Belief Update: } \alpha_t(k) = P(x_t \mid z_t = k) \sum_{j=1}^K \alpha_{t-1}(j) A_{jk}$$
 
-$$\text{Almgren-Chriss Price Impact: } P_{\text{exec}} = P_{\text{mid}} \pm \frac{\text{Spread}}{2} + \gamma \left(\frac{v_t}{V_t}\right) P_{\text{mid}} + \eta \cdot \text{sgn}(v_t) \sqrt{\frac{|v_t|}{\tau V_t}} \sigma_t$$
+$$\text{Temporary impact (this fill): } \Delta P_{\text{temp}} = \eta \cdot \text{sgn}(v_t) \left(\frac{|v_t|}{V_t}\right)^{\!\alpha} \sigma_t \, P_{\text{mid}}, \quad \alpha = 0.5$$
+$$\text{Permanent impact (shifts \textit{future} mid prices, not this fill): } \Delta P_{\text{perm}} = \gamma \cdot \text{sgn}(v_t) \left(\frac{v_t}{V_t}\right) P_{\text{mid}}$$
+$$\text{Execution price: } P_{\text{exec}, t} = P_{\text{ask or bid}, t} + \Delta P_{\text{temp}} \quad \text{(the quoted bid/ask already prices in the spread)}$$
 
 $$\text{Current-Price Training Reward: } r_t^{\text{train}} = -\frac{P_{\text{exec}, t} - P_{\text{mid}, t}}{P_{\text{mid}, t}} \times 10,000 - \lambda \cdot \text{Spread Penalty}_t$$
