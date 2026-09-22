@@ -3,7 +3,7 @@
  * The base URL is inlined at build time from NEXT_PUBLIC_API_URL and is used by the browser.
  */
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://kairo-execution-production.up.railway.app';
 
 export interface ExecutionSimulateRequest {
   symbol: string;
