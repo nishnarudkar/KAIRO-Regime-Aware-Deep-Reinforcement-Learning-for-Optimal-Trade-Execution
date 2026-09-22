@@ -34,7 +34,7 @@ services:
       args:
         # NEXT_PUBLIC_* values are inlined at build time and are used by the *browser*,
         # so this must be a URL reachable from the user's machine, not the compose service name.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://kairo-execution-production.up.railway.app}
     container_name: kairo_frontend
     ports:
       - "3000:3000"

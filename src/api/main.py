@@ -66,10 +66,9 @@ app = FastAPI(
 )
 
 # ── CORS Middleware ─────────────────────────────────────────────────────────────
-# Origins come from KAIRO_CORS_ORIGINS (comma separated); default is the local dashboard.
-_origins = [o.strip() for o in os.environ.get(
-    "KAIRO_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-).split(",") if o.strip()]
+# Origins come from KAIRO_CORS_ORIGINS (comma separated); default is "*" for seamless cloud serving.
+_origins_env = os.environ.get("KAIRO_CORS_ORIGINS", "*")
+_origins = ["*"] if _origins_env == "*" else [o.strip() for o in _origins_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
