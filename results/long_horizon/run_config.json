@@ -1,0 +1,27 @@
+{
+  "scenarios": [
+    "normal",
+    "high_volatility",
+    "low_liquidity",
+    "stress",
+    "regime_transition",
+    "liquidity_shock"
+  ],
+  "seeds": [
+    42,
+    123,
+    777,
+    2024
+  ],
+  "train_timesteps": 150000,
+  "n_bars": 6000,
+  "horizon_steps": 90,
+  "order_participation": 0.055,
+  "target_inventory": 100000.0,
+  "side": "BUY",
+  "train_ratio": 0.7,
+  "run_ablation": true,
+  "include_ppo": true,
+  "max_windows": null,
+  "n_jobs": 26
+}

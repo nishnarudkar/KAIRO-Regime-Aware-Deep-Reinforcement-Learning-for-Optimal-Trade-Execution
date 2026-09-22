@@ -12,11 +12,11 @@
 | :--- | :--- | :--- |
 | **Section 1** | Introduction & Problem Formulation (Implementation Shortfall & MDP) | 2.5 mins |
 | **Section 2** | Regime Detection Architecture (Causal Gaussian HMM Filter) | 2.0 mins |
-| **Section 3** | Experimental Design V2 & Scientific Rigor Audit | 3.0 mins |
-| **Section 4** | Empirical Findings & Research Question Analysis (RQ1–RQ4) | 2.5 mins |
+| **Section 3** | Experimental Design V2 & Two-Round Rigor Audit | 3.0 mins |
+| **Section 4** | Empirical Findings Across 3 Evaluation Suites (Main, Long Horizon, Real AAPL) | 2.5 mins |
 | **Section 5** | Full-Stack Platform, API, Safety Gates & MLflow Tracking | 2.0 mins |
 | **Section 6** | Conclusion & Future Directions | 1.0 min |
-| **Q&A** | Defensive Q&A Preparation (15+ Anticipated Professor Questions) | 10 mins |
+| **Q&A** | Defensive Q&A Preparation (16+ Anticipated Professor Questions) | 10 mins |
 
 ---
 
@@ -30,94 +30,95 @@
 **Spoken Script:**
 > *"Good morning Professor and members of the evaluation committee. Today, I am excited to present **KAIRO: Regime-Aware Deep Reinforcement Learning for Optimal Trade Execution**.*
 >
-> *In institutional algorithmic trading, when a portfolio manager wants to buy or sell a large position—say, 100,000 shares of Apple—executing that order all at once in a single market order would trigger severe price impact, driving up purchasing costs. To prevent this, institutional trading desks execute large 'parent orders' by slicing them into smaller 'child orders' over a specified time horizon—for instance, 30 minutes.*
+> *In institutional algorithmic trading, when a portfolio manager wants to buy or sell a large position—say, executing a parent order over a 30-minute to 90-minute horizon—executing that order all at once in a single market order triggers severe price impact, driving up purchasing costs. To prevent this, trading desks slice parent orders into smaller child orders over time.*
 >
-> *The fundamental metric we aim to minimize is **Implementation Shortfall (IS)**, defined as the difference between the decision price when the order was initiated and the volume-weighted average execution price achieved, expressed in basis points.*
+> *The fundamental metric we aim to minimize is **Implementation Shortfall (IS)**, defined as the basis-point difference between the decision price when the order was initiated and the volume-weighted average execution price achieved.*
 >
-> *Traditional static algorithms like TWAP (Time-Weighted Average Price), VWAP (Volume-Weighted Average Price), and POV (Percentage of Volume) execute child orders according to rigid schedules. The core objective of KAIRO is to determine whether adaptive Deep Reinforcement Learning agents—specifically Deep Q-Networks (DQN) and Proximal Policy Optimization (PPO)—augmented with real-time, causally inferred market regime beliefs, can dynamically adjust execution schedules to outperform static baselines while maintaining strict risk controls."*
+> *Traditional static algorithms like TWAP (Time-Weighted Average Price), VWAP (Volume-Weighted Average Price), and POV (Percentage of Volume) execute child orders according to rigid schedule rules. The core objective of KAIRO is to determine whether adaptive Deep Reinforcement Learning agents—specifically Deep Q-Networks (DQN) and Proximal Policy Optimization (PPO)—augmented with real-time, causally inferred market regime beliefs, can dynamically adjust execution schedules to outperform static baselines under strict risk constraints."*
 
 ---
 
-### Slide 2: Mathematical MDP Formulation & Environment Design
+### Slide 2: Mathematical MDP Formulation & Action-Reward Redesign
 *(Time: 1:15 - 2:30)*
 
-**Visual:** MDP Equations, State Vector Breakdown (7-dim plain vs 12-dim regime-aware), Action Space, and Reward Scaling.
+**Visual:** MDP Equations, State Vector Breakdown (7-dim plain vs 12-dim regime-aware), TWAP-Relative Action Space, and Current-Price Reward Control Variate.
 
 **Spoken Script:**
 > *"To address optimal execution with Reinforcement Learning, we formulate the execution task as a finite-horizon Markov Decision Process (MDP).*
 >
-> *Our state space is structured to preserve strict causality. For a plain agent, the 7-dimensional observation vector includes normalized remaining inventory, normalized remaining time steps, recent price returns, rolling volatility, normalized bid-ask spread, rolling order flow imbalance, and the current participation rate.*
+> *Our state space preserves strict causality. Plain agents observe a 7-dimensional vector (remaining inventory, remaining time steps, returns, Parkinson volatility, bid-ask spread, order flow imbalance, participation rate). Regime-aware agents observe a 12-dimensional vector concatenating the posterior belief distribution over market regimes from a Hidden Markov Model, transition probabilities, and expected regime duration.*
 >
-> *For our regime-aware agents, this state vector is expanded to 12 dimensions by concatenating the posterior belief distribution over market regimes derived from a Hidden Markov Model, along with regime transition probabilities and expected regime duration.*
+> *A major innovation in our MDP formulation is our **TWAP-Relative Action Space**. In early RL implementations, action spaces used fixed fractions of remaining inventory (0/10/25/50%), which mathematically could not express TWAP—biasing the agent with a +1.7 bps penalty before training even began! In KAIRO, actions are multiples of the target TWAP slice (\( a \in \{0, 0.5, 1.0, 2.0, 4.0\} \times \text{Slice}_{\text{TWAP}} \)). Playing 1.0× exactly reproduces TWAP, allowing the agent to start at baseline parity and learn true execution alpha.*
 >
-> *Our action space consists of 5 discrete child order participation levels—ranging from passive (0% of target rate) to aggressive (200% of target rate)—subject to a strict 15% market participation cap to avoid market cornering.*
->
-> *Crucially, our reward function is scaled directly in implementation shortfall basis points. At each step \( t \), the reward is defined as:*
->
-> \[
-> r_t = -\frac{S_t - S_0}{S_0} \times 10,000 - \lambda \cdot \text{Spread Penalty}_t
-> \]
->
-> *Unfilled shares at the end of the 30-minute horizon incur a terminal liquidation penalty at the prevailing ask plus a penalty spread, ensuring the agent learns to complete the parent order under real-world market constraints."*
+> *Additionally, during training, we charge child-order fills against the *current* market price as a control variate, reducing episode-return variance from 87 bps std down to 3 bps std while preserving true arrival-price Implementation Shortfall for evaluation."*
 
 ---
 
 ### Slide 3: Causal Regime Detection & Gaussian HMM Filter
 *(Time: 2:30 - 4:30)*
 
-**Visual:** HMM Architecture Diagram, Transition Probability Matrix, Forward Algorithm Equation, and Zero-Lookahead Warm-Start.
+**Visual:** HMM Architecture Diagram, Feature Optimization (ARI 0.59–0.63), Forward Algorithm Equation, and Zero-Lookahead Warm-Start.
 
 **Spoken Script:**
 > *"Market conditions oscillate across structural regimes—such as low-volatility trending markets, high-volatility turbulence, or liquidity shocks. To detect these shifts without lookahead bias, KAIRO integrates an online **Gaussian Hidden Markov Model (HMM)**.*
 >
-> *The HMM models the unobserved regime state \( z_t \in \{1, \dots, K\} \) using observable features: 1-minute log returns, rolling Parkinson volatility, and normalized bid-ask spread. The joint distribution is parameterized by state transition matrix \( A \) and emission distributions \( \mathcal{N}(\boldsymbol{\mu}_k, \boldsymbol{\Sigma}_k) \).*
+> *The HMM models the unobserved regime state \( z_t \in \{1, \dots, K\} \) using observable market features. Through a tuning-seed feature search, we optimized the feature representation to reach an Adjusted Rand Index (ARI) of **0.59–0.63** against latent regimes, up from 0.42 in baseline models.*
 >
-> *To enforce zero-lookahead bias, the HMM parameters are fitted exclusively on the 70% training split. During online evaluation and simulation, we compute the posterior regime belief \( P(z_t = k \mid x_{1:t}) \) using the causal HMM Forward Algorithm:*
+> *To enforce zero-lookahead bias, HMM parameters are fitted exclusively on the 70% training split. During online simulation, we compute the posterior regime belief \( P(z_t = k \mid x_{1:t}) \) using the causal HMM Forward Algorithm:*
 >
 > \[
 > \alpha_t(k) = P(x_t \mid z_t = k) \sum_{j=1}^K \alpha_{t-1}(j) A_{jk}
 > \]
 >
-> *Furthermore, every test episode undergoes a causal warm-start phase over preceding historical bars so that the forward filter initializes with stable regime posterior probabilities rather than cold uniform priors."*
+> *Furthermore, every test episode undergoes a 50-bar causal warm-start phase over preceding historical data so that the forward filter initializes with stable regime posterior probabilities rather than cold uniform priors."*
 
 ---
 
-### Slide 4: Scientific Rigor & The Design V2 Audit
+### Slide 4: Scientific Rigor & Two-Round Audit
 *(Time: 4:30 - 7:30)*
 
-**Visual:** Comparison Table of Design V1 (Flawed Setup) vs Design V2 (Rigorous Scientific Benchmark).
+**Visual:** Two-Round Audit Summary Table: Round 1 (Validity of Setup) & Round 2 (Eliminating Baseline Bias & Controls).
 
 **Spoken Script:**
-> *"Now, I would like to highlight a critical turning point in this research: **Our Scientific Rigor & Reproducibility Audit (Design V2)**.*
+> *"Now, I would like to highlight a core pillar of this project: **Our Two-Round Research & Reproducibility Audit**.*
 >
-> *Initial implementations of RL trading environments in literature often suffer from hidden flaws that fabricate false performance gains. During our audit of the initial environment (Design V1), we identified and resolved several major flaws:*
+> *RL trading literature frequently suffers from hidden experimental flaws. We conducted a systematic two-round audit to establish a bulletproof benchmark:*
 >
-> 1. *First, synthetic prices in the early setup moved at 5% per minute—an unrealistic volatility scale where pure price luck dominated results and an agent that delayed trading looked artificially brilliant. We redesigned the market simulator to operate at realistic scale (0.02%–0.3% per minute) with zero drift.*
-> 2. *Second, training episodes previously replayed the exact same 30 bars repeatedly, allowing agents to memorize a single price path. In Design V2, training selects random window start times across historical series, and evaluation is conducted across 30 paired out-of-sample windows across 8 random seeds and 6 distinct market scenarios (1,440 test windows per strategy).*
-> 3. *Third, the baseline 'VWAP' in many libraries is secretly just TWAP because volume profiles are ignored. We implemented a true ex-ante volume-profile VWAP estimated from earlier trading days.*
-> 4. *Fourth, and most importantly, we introduced a **Shuffled-Regime Ablation Control**. A regime-aware agent might perform better simply because its input vector is larger. By feeding a control agent shuffled regime beliefs, we isolate whether the performance gain is truly due to regime awareness or merely extra network capacity."*
+> * **Round 1 (Validity of Setup):**  
+>   1. *Fixed synthetic price volatility from an unrealistic 5%/minute down to realistic scale (0.02%–0.3%/min) with zero drift.*  
+>   2. *Replaced single-path training with random-window training across 5 seeds, 6 scenarios, and paired out-of-sample windows.*  
+>   3. *Replaced fake TWAP-based 'VWAP' with a true ex-ante volume-profile VWAP.*  
+>   4. *Incorporated scenario-specific bid-ask spreads and causal volume normalizers.*
+>
+> * **Round 2 (Eliminating Baseline Bias & Controls):**  
+>   1. *Action space redesign to TWAP-relative multiples (0/0.5/1/2/4×).*  
+>   2. *Dynamic order sizing set to 5.5% of trailing window volume (achieving ~100% fill rates everywhere).*  
+>   3. *Training reward variance reduction via current-price control variates.*  
+>   4. *Hyperparameter grid tuning across learning rates and network widths.*  
+>   5. *Introduction of the **Shuffled-Regime Control**, which feeds permuted regime beliefs to isolate genuine regime signal processing from extra neural network parameter capacity."*
 
 ---
 
-### Slide 5: Empirical Findings & Research Question Analysis (RQ1–RQ4)
+### Slide 5: Empirical Findings Across 3 Evaluation Suites (RQ1–RQ4)
 *(Time: 7:30 - 10:00)*
 
-**Visual:** Empirical Results Table (Mean IS bps, 95% Bootstrap CIs, Wilcoxon p-values, Fill Rates) and Strategy Comparison Charts.
+**Visual:** Empirical Results Summary Table across Main Suite (30-min), Long Horizon (90-min), and Real AAPL Market Data Suite.
 
 **Spoken Script:**
-> *"Let us examine our empirical findings across our four core Research Questions:*
+> *"We evaluated our models across three distinct experimental suites:*
 >
-> * **RQ1: Does deep RL outperform static baselines?**  
->   *Regime-Aware DQN (21.25 bps) and Regime-Aware PPO (21.09 bps) modestly outperform TWAP (22.83 bps) by ~1.6 to 1.8 bps with 95% confidence intervals ending just below zero. However, **no learned policy beats POV (20.09 bps)**, which remains the single best strategy across all scenarios.*
+> 1. **Main 30-Minute Suite (900 Paired Windows):**  
+>    * All strategies operate within a narrow ~3 bps band (POV 20.08 bps, Regime PPO 21.90 bps, TWAP 22.59 bps, DQN 23.09 bps).  
+>    * **RQ1 & RQ2:** Learned policies do not robustly beat TWAP (95% CIs straddle 0) and **no learned policy beats POV** (all +1.8 to +3.0 bps costlier).  
+>    * **RQ3:** Regime-Aware PPO vs. Shuffled Control is **−0.08 bps (CI [−0.81, +0.66])**, proving that regime features provide no advantage over noise.
 >
-> * **RQ2: Does causally inferred regime information improve execution?**  
->   *Comparing Regime-Aware PPO vs Plain PPO shows an apparent reduction in shortfall (−3.61 bps, 95% CI [−5.26, −2.06]). However, for DQN, the effect is negligible (−0.25 bps, CI includes 0).*
+> 2. **Long Horizon 90-Minute Suite (480 Windows):**  
+>    * **Critical Finding:** **DQN breaks down severely at 90 minutes** (+27–29 bps vs TWAP, IS = 54.70–60.99 bps, fill rate drops to 74.5%), revealing severe horizon instability when evaluated past its 30-min tuning window.  
+>    * PPO remains stable (28.65 bps, level with TWAP at 28.67 bps).
 >
-> * **RQ3: Does regime-awareness beat the Shuffled-Regime Control?**  
->   *This is our key scientific contribution. When comparing Regime-Aware PPO to its Shuffled-Regime Control, the difference is **+0.48 bps** with a 95% CI of [−0.26, +1.17], which includes zero! This proves that PPO's gain over plain PPO was driven by additional input dimensionality and capacity, **not genuine regime signal consumption**.*
->
-> * **RQ4: Is the regime effect consistent across value-based (DQN) and policy-gradient (PPO) algorithms?**  
->   *No. The two algorithm families exhibit divergent behaviors, confirming that regime awareness is highly sensitive to policy representation and stability."*
+> 3. **Real-Data Transfer Suite (5 Days Real AAPL 1-Min Bars, 63 Windows):**  
+>    * Models trained purely on synthetic data transferred to real market bars without retraining.  
+>    * Learned policies nominally beat TWAP (11.50 bps) and VWAP (11.10 bps)—Regime DQN achieved 10.14 bps and Regime PPO achieved 9.70 bps. However, Regime PPO fill rate dropped to 80%, highlighting real-world microstructural friction."*
 
 ---
 
@@ -130,7 +131,7 @@
 > *"Beyond empirical research, KAIRO is engineered as a complete production-grade execution platform:*
 >
 > * **Backend & API:** Built with FastAPI, serving trained model checkpoints from `models/` with SQLite persistence. It enforces honest serving—untrained models return HTTP 503 instead of mock data, and order routes are protected via API keys (`X-API-Key`).*
-> * **Pre-Trade Risk Gates:** Our mock paper execution pipeline validates orders against institutional risk gates: Max Single Order Size, Max Daily Volume Cap, Fat-Finger Price Deviation limits, and an Emergency Kill-Switch.*
+> * **Pre-Trade Risk Gates:** Our paper execution pipeline validates orders against institutional risk gates: Max Single Order Size, Max Daily Volume Cap, Fat-Finger Price Deviation limits, and an Emergency Kill-Switch.*
 > * **Remote MLflow Tracking:** Integrated with DagsHub MLflow remote logging, capturing real-time loss curves, reward trajectories, hyperparameter configurations, and evaluation metrics.*
 > * **Frontend Dashboard:** A Next.js 14 + TypeScript dashboard featuring 5 real-time views: Order Ticket, Execution Monitor, Performance Analytics with paired confidence intervals, Strategy Comparison, and HMM Regime Exploration.*
 > * **Quality Assurance:** Covered by **198 unit tests** with 100% pass rate, validating causality, zero-lookahead, MDP boundaries, and API security."*
@@ -143,49 +144,65 @@
 **Visual:** Key Takeaways Slide & Future Roadmap.
 
 **Spoken Script:**
-> *"In summary, KAIRO demonstrates that while deep reinforcement learning can match or slightly improve upon simple TWAP benchmarks, claims of massive DRL superiorities in literature often stem from flawed simulation setups, lack of realistic market impact, and missing ablation controls.*
+> *"In summary, KAIRO demonstrates that while deep reinforcement learning can match simple TWAP benchmarks, claims of massive DRL superiorities in literature often stem from flawed simulation setups, non-expressive action spaces, and missing ablation controls.*
 >
-> *Our rigorous benchmark proves that standard regime-aware signals do not robustly beat POV baselines or shuffled controls under realistic, zero-drift market microstructures.*
+> *Our rigorous multi-suite benchmark proves that standard regime-aware signals do not robustly beat POV baselines or shuffled controls under realistic market microstructures, and value-based algorithms like DQN can suffer severe horizon instability.*
 >
-> *Future research directions include extending training to multi-asset LOB (Limit Order Book) data, incorporating continuous action spaces with SAC (Soft Actor-Critic), and deploying non-mock live WebSocket paper trading via Alpaca Markets.*
+> *Future research directions include extending training to multi-asset LOB (Limit Order Book) data, incorporating continuous action spaces with Soft Actor-Critic (SAC), and deploying non-mock live WebSocket paper trading via Alpaca Markets.*
 >
 > *Thank you. I am now open to your questions."*
 
 ---
 
-## Defensive Q&A Guide (15+ Anticipated Professor Questions)
+## Defensive Q&A Guide (16+ Anticipated Professor Questions)
 
-### Category 1: Market Microstructure & Simulation Mechanics
+### Category 1: Action Space & Reward Engineering Mechanics
 
-#### Q1: "How did you model market impact in your simulator? Is it linear or square-root impact?"
-* **What the Professor is testing:** Understanding of market microstructure, Kyle's Lambda, and Almgren-Chriss impact theory.
-* **Short Answer:** We implement a calibrated Almgren-Chriss style market impact model combining permanent linear impact and transient square-root temporary impact.
+#### Q1: "Why did you switch from inventory-fraction actions to TWAP-relative actions in Round 2?"
+* **What the Professor is testing:** Understanding of action-space design, baseline representation bias, and RL environment initialization.
+* **Short Answer:** Fixed fraction actions (0/10/25/50% of remaining inventory) could not mathematically express TWAP, imposing an artificial +1.7 bps penalty on agents before training began.
 * **Detailed Technical Answer:**
-  > *"In `src/execution/simulator.py`, the execution price for child order slice \( v_t \) at step \( t \) is given by:*
+  > *"In Round 1, action choices were fractions of remaining inventory. Because remaining inventory decays exponentially over time under fractional execution, no sequence of discrete fraction choices could reproduce an equal-slice TWAP trajectory. In Round 2, we redefined actions as multiples of the target TWAP slice (\( a \in \{0, 0.5, 1.0, 2.0, 4.0\} \times \text{Slice}_{\text{TWAP}} \)). Action 1.0x plays exact TWAP. This ensures the agent starts at parity with TWAP and only learns true execution deviations."*
+
+#### Q2: "Explain the 'current-price' reward control variate. How does it reduce training variance?"
+* **What the Professor is testing:** Reinforcement learning variance reduction techniques, reward shaping, and control variates.
+* **Short Answer:** Episode price drift over 30–90 minutes adds severe noise (~87 bps std) to episode returns. Charging fills against current market price during training isolates child-order execution cost (~3 bps std).
+* **Detailed Technical Answer:**
+  > *"When charging fills against initial arrival price \( P_0 \), random market trend over 30 bars creates massive reward noise that swamps gradient updates. By defining training step reward as:*
   >
   > \[
-  > P_{\text{exec}} = P_{\text{mid}} \pm \frac{\text{Spread}}{2} + \gamma \cdot \left(\frac{v_t}{V_t}\right) \cdot P_{\text{mid}} + \eta \cdot \text{sgn}(v_t) \cdot \sqrt{\frac{|v_t|}{\tau \cdot V_t}} \cdot \sigma_t
+  > r_t^{\text{train}} = -\frac{P_{\text{exec}, t} - P_{\text{mid}, t}}{P_{\text{mid}, t}} \times 10,000 - \lambda \cdot \text{Spread Penalty}_t
   > \]
   >
-  > *where \( \gamma \) is the permanent price impact coefficient, \( \eta \) is temporary impact, \( V_t \) is total bar volume, and \( \sigma_t \) is Parkinson volatility. This prevents the agent from executing large block trades without incurring realistic slippage."*
-
-#### Q2: "Why were fill rates below 100% in some scenarios in your results table?"
-* **What the Professor is testing:** Awareness of participation rate constraints and terminal order completion handling.
-* **Short Answer:** We enforce a strict 15% market participation cap. In thin liquidity scenarios, the total available volume in 30 minutes is insufficient to absorb 100,000 shares under this cap.
-* **Detailed Technical Answer:**
-  > *"In scenarios like `low_liquidity` and `liquidity_shock`, total market volume across 30 bars drops below 666,000 shares. At a 15% participation cap, the maximum shares the agent can legally execute is less than 100,000. Unfilled shares at step 30 are penalized with a terminal liquidation penalty charged at a spread penalty of +50 bps over the final ask price, which is fully accounted for in the reported Implementation Shortfall."*
+  > *we remove un-forecastable market drift from the gradient signal. Evaluation always measures true arrival-price Implementation Shortfall (\( P_{\text{exec}} - P_0 \)), preserving standard benchmarking."*
 
 ---
 
-### Category 2: Hidden Markov Models & Regime Detection
+### Category 2: Horizon Sensitivity & Long-Horizon Breakdown
 
-#### Q3: "How did you determine that 3 regimes was the right choice for the HMM? Why not 2 or 5 states?"
-* **What the Professor is testing:** Model selection criteria (AIC/BIC) and economic interpretability.
-* **Short Answer:** We evaluated Gaussian HMMs with state counts from 2 to 6 using Bayesian Information Criterion (BIC) and log-likelihood trade-offs on historical training data. 3 states yielded the optimal balance.
+#### Q3: "Why did DQN fail so severely (+27 to +29 bps IS) at the 90-minute horizon while PPO remained stable?"
+* **What the Professor is testing:** Knowledge of value-based (Q-learning) vs. policy-gradient (PPO) generalization, horizon extrapolation, and Q-value overestimation.
+* **Short Answer:** DQN was tuned for 30 steps. Extending to 90 steps causes Q-value overestimation compounding over longer episode horizons, whereas PPO's clipped policy bounds action probability shifts.
 * **Detailed Technical Answer:**
-  > *"In `src/regimes/hmm_detector.py`, a 3-state HMM maps cleanly to distinct economic market conditions: State 0 represents Low Volatility / Normal Liquidity, State 1 represents Medium Volatility / Trending, and State 2 represents High Volatility / Liquidity Shock. 2 states failed to separate trend from turbulence, while 4+ states caused state overfitting and rapid, noisy state flipping."*
+  > *"DQN estimates state-action values \( Q(s, a) \) iteratively via temporal difference bootstrapping. When evaluated at 90 steps (3x its tuning horizon), accumulated Q-value approximation errors cause the policy to choose passive actions early, leaving large inventories at step 90 that trigger severe terminal liquidation penalties (+181 bps in `stress` scenario). PPO's stochastic policy with clipped advantage bounds parameter updates, preventing catastrophic policy degradation."*
 
-#### Q4: "How do you guarantee that the HMM regime belief contains zero lookahead bias during evaluation?"
+#### Q4: "How did you fix the fill-rate drop in thin liquidity scenarios between Round 1 and Round 2?"
+* **What the Professor is testing:** Parent order sizing relative to market volume, fill rate normalization, and market impact constraints.
+* **Short Answer:** In Round 1, parent order size was fixed at 100,000 shares regardless of scenario volume. In Round 2, order size was dynamically scaled to 5.5% of trailing window volume.
+* **Detailed Technical Answer:**
+  > *"In Round 1, thin scenarios (`low_liquidity`, `liquidity_shock`) had less than 666,000 total shares available across 30 bars. Under a 15% participation cap, executing 100,000 shares was mathematically impossible, causing fill rates to drop to 22%–72%. In Round 2, parent order size \( Q_0 \) is set to \( 0.055 \times \bar{V}_{\text{window}} \), achieving ~100% fill rates across all scenarios and eliminating artificial liquidation penalty distortions."*
+
+---
+
+### Category 3: Hidden Markov Models & Regime Detection
+
+#### Q5: "How did you improve the HMM Adjusted Rand Index (ARI) from 0.42 to 0.59–0.63 in Round 2?"
+* **What the Professor is testing:** Feature engineering for unsupervised learning, clustering evaluation, and HMM state recovery.
+* **Short Answer:** We conducted a grid search over feature combinations on tuning seeds, identifying Parkinson volatility, normalized spread, and log returns as the optimal emission feature set.
+* **Detailed Technical Answer:**
+  > *"In `src/regimes/hmm_detector.py`, the initial feature set included raw price momentum and volume ratios that introduced noise into Gaussian covariance matrices. By testing feature combinations against true latent generator regimes, we selected 1-minute log returns, rolling Parkinson volatility (\( \sigma_P \)), and normalized bid-ask spread. This increased regime classification ARI from 0.42 to 0.59–0.63 and accuracy to 55–56%."*
+
+#### Q6: "How do you guarantee that the HMM regime belief contains zero lookahead bias during evaluation?"
 * **What the Professor is testing:** Experimental integrity, data leakage prevention, and causal filtering.
 * **Short Answer:** HMM parameters are fitted strictly on the 70% training split. Online regime posterior probabilities are updated using the HMM Forward Algorithm step-by-step using only observations up to step \( t \).
 * **Detailed Technical Answer:**
@@ -193,35 +210,19 @@
 
 ---
 
-### Category 3: Reinforcement Learning & MDP Design
-
-#### Q5: "Why did you choose discrete action spaces (0%, 50%, 100%, 150%, 200%) instead of continuous actions?"
-* **What the Professor is testing:** MDP design choices, stability of value-based methods, and convergence properties.
-* **Short Answer:** Discrete participation multiples allow direct comparison between DQN and PPO while avoiding non-stationary exploration issues common in continuous action RL for trade execution.
-* **Detailed Technical Answer:**
-  > *"Discretizing the participation multiplier relative to the target TWAP rate into 5 actions (\( a \in \{0.0, 0.5, 1.0, 1.5, 2.0\} \times \text{Rate}_{\text{TWAP}} \)) provides a well-defined action space. It allows DQN (value-based) and PPO (policy-gradient) to share identical action representations. Furthermore, continuous execution actions often sample extreme participation rates early in training, leading to catastrophic liquidation penalties."*
-
-#### Q6: "Why did PPO show such high shortfall variance in the `regime_transition` scenario compared to DQN?"
-* **What the Professor is testing:** Understanding of policy gradient vs. value-based algorithm dynamics under non-stationary state shifts.
-* **Short Answer:** PPO's stochastic policy optimization can suffer from policy entropy collapse in non-stationary transition regions, leading to suboptimal local minima across certain random seeds.
-* **Detailed Technical Answer:**
-  > *"In `regime_transition`, market volatility abruptly shifts mid-episode. PPO updates policy parameters via clipped surrogate objectives. When a random seed encounters high volatility early in training, the policy clipped advantage can push action probabilities toward passive execution, leading to large unexecuted inventories at step 30 and heavy liquidation penalties. DQN, using target Q-network smoothing and replay buffer sampling across diverse windows, exhibits lower variance."*
-
----
-
 ### Category 4: Scientific Audit & Experimental Methodology
 
-#### Q7: "What was wrong with the Design V1 setup, and why did you withdraw the initial 15–35% gain claims?"
-* **What the Professor is testing:** Academic honesty, willingness to audit bad code, and scientific integrity.
-* **Short Answer:** Design V1 had 5% per minute price volatility, replayed the exact same 30 bars, used TWAP labeled as VWAP, and lacked an ablation control. The audit fixed these flaws and instituted Design V2.
-* **Detailed Technical Answer:**
-  > *"In Design V1: (1) 5% per minute price volatility caused price path noise to completely overwhelm execution cost. (2) Episodes replayed a single 30-bar slice, causing agents to overfit and memorize price turns. (3) The VWAP baseline was mathematically identical to TWAP because the volume profile was never applied. (4) There was no shuffled control. In Design V2, we corrected all simulator parameters to realistic scale (0.02%–0.3%/min), implemented random window training, evaluated across 1,440 paired out-of-sample windows (8 seeds × 6 scenarios × 30 windows), and introduced the shuffled-regime control."*
-
-#### Q8: "Explain the Shuffled-Regime Control. Why is it necessary?"
+#### Q7: "Explain the Shuffled-Regime Control. Why is it necessary?"
 * **What the Professor is testing:** Understanding of ablation studies, confounding variables, and baseline controls.
 * **Short Answer:** Adding 5 regime features increases the network input dimension from 7 to 12. The shuffled control feeds permuted regime probabilities to prove whether gains stem from regime signals or extra network capacity.
 * **Detailed Technical Answer:**
-  > *"If a 12-dimensional Regime-Aware PPO agent outperforms a 7-dimensional Plain PPO agent, we cannot immediately attribute the gain to market regime intelligence—the improvement could simply be due to larger network capacity or multi-feature representation noise. In `src/evaluation/ablation.py`, the Shuffled-Regime Control receives identical 12-dim inputs, but the 5 regime belief features are randomly shuffled across time. Since Regime-Aware PPO (+0.48 bps vs Shuffled Control, CI [−0.26, +1.17]) failed to beat the shuffled control, we proved that the regime signal provided no true informational edge."*
+  > *"If a 12-dimensional Regime-Aware PPO agent outperforms a 7-dimensional Plain PPO agent, we cannot immediately attribute the gain to market regime intelligence—the improvement could simply be due to larger network capacity or multi-feature representation noise. In `src/evaluation/ablation.py`, the Shuffled-Regime Control receives identical 12-dim inputs, but the 5 regime belief features are randomly shuffled across time. Since Regime-Aware PPO (−0.08 bps vs Shuffled Control, CI [−0.81, +0.66]) failed to beat the shuffled control, we proved that the regime signal provided no true informational edge."*
+
+#### Q8: "What did your Real-Data Transfer test reveal when evaluating synthetic-trained models on real AAPL bars?"
+* **What the Professor is testing:** Sim-to-real transfer, real market microstructural friction, and model generalizability.
+* **Short Answer:** Models nominally beat TWAP and VWAP by 0.5–1.8 bps on real AAPL data, but Regime PPO fill rate dropped from 99% to 80%, showing real-world microstructural friction.
+* **Detailed Technical Answer:**
+  > *"We evaluated synthetic-trained checkpoints directly on 5 trading days of real 1-minute AAPL bars (63 test windows) without retraining (`results/real_data/`). Regime DQN achieved 10.14 bps and Regime PPO achieved 9.70 bps vs TWAP (11.50 bps) and VWAP (11.10 bps). However, 3.2% of real minutes had zero trades, causing Regime PPO's fill rate to drop to 80.0% due to participation cap constraints. This demonstrates that while directional execution policies transfer reasonably well, microstructural illiquidity requires dedicated real-data fine-tuning."*
 
 ---
 
@@ -231,13 +232,13 @@
 * **What the Professor is testing:** Knowledge of parametric vs non-parametric statistics for financial returns.
 * **Short Answer:** Implementation shortfall distributions across trading windows display fat tails (kurtosis) and skewness, violating the normality assumption of paired t-tests.
 * **Detailed Technical Answer:**
-  > *"Financial execution shortfall data across 1,440 windows exhibits heavy tail distributions due to occasional liquidity shocks and terminal liquidation penalties. Standard paired t-tests are highly sensitive to outliers. The Wilcoxon signed-rank test is a non-parametric test that evaluates rank differences between paired strategy evaluations on identical windows, providing robust p-values without assuming Gaussian shortfall distributions."*
+  > *"Financial execution shortfall data across 900+ windows exhibits heavy tail distributions due to occasional liquidity shocks and terminal liquidation penalties. Standard paired t-tests are highly sensitive to outliers. The Wilcoxon signed-rank test is a non-parametric test that evaluates rank differences between paired strategy evaluations on identical windows, providing robust p-values without assuming Gaussian shortfall distributions."*
 
-#### Q10: "If RL only beats TWAP by ~1.6 bps and loses to POV, is DRL actually useful for trade execution?"
+#### Q10: "If RL only beats TWAP by ~0.7 bps and loses to POV, is DRL actually useful for trade execution?"
 * **What the Professor is testing:** Practical trading value, basis point economics, and realistic project evaluation.
-* **Short Answer:** In institutional trading, 1.6 basis points on a $100M daily trading volume represents $16,000 per day ($4M/year) in savings. However, POV remains superior when volume profiles are predictable.
+* **Short Answer:** In institutional trading, 0.7 basis points on a $100M daily trading volume represents $7,000 per day ($1.75M/year) in savings. However, POV remains superior when volume profiles are predictable.
 * **Detailed Technical Answer:**
-  > *"While 1.6 bps sounds small, in institutional asset management executing billions annually, 1 to 2 basis points translates into millions of dollars in alpha retention. Furthermore, our findings show that static POV (which dynamic RL struggled to beat) benefits from knowing the volume structure. DRL's real promise lies in hybrid models—combining POV volume tracking with DRL dynamic urgency adjustments under adverse price momentum."*
+  > *"While 0.7 bps sounds small, in institutional asset management executing billions annually, fractions of a basis point translate into substantial alpha retention. Furthermore, our findings show that static POV (which dynamic RL struggled to beat) benefits from knowing the volume structure. DRL's real promise lies in hybrid models—combining POV volume tracking with DRL dynamic urgency adjustments under adverse price momentum."*
 
 ---
 
@@ -271,8 +272,10 @@
 
 $$\text{Implementation Shortfall (bps)} = \frac{P_{\text{exec}} - P_0}{P_0} \times 10,000$$
 
+$$\text{TWAP-Relative Action: } v_t = a_t \cdot \left(\frac{Q_0}{T}\right), \quad a_t \in \{0.0, 0.5, 1.0, 2.0, 4.0\}$$
+
 $$\text{HMM Forward Belief Update: } \alpha_t(k) = P(x_t \mid z_t = k) \sum_{j=1}^K \alpha_{t-1}(j) A_{jk}$$
 
 $$\text{Almgren-Chriss Price Impact: } P_{\text{exec}} = P_{\text{mid}} \pm \frac{\text{Spread}}{2} + \gamma \left(\frac{v_t}{V_t}\right) P_{\text{mid}} + \eta \cdot \text{sgn}(v_t) \sqrt{\frac{|v_t|}{\tau V_t}} \sigma_t$$
 
-$$\text{MDP Reward Function: } r_t = -\frac{S_t - S_0}{S_0} \times 10,000 - \lambda \cdot \text{Spread Penalty}_t$$
+$$\text{Current-Price Training Reward: } r_t^{\text{train}} = -\frac{P_{\text{exec}, t} - P_{\text{mid}, t}}{P_{\text{mid}, t}} \times 10,000 - \lambda \cdot \text{Spread Penalty}_t$$

@@ -76,7 +76,8 @@ def main() -> None:
         "## Configuration", "",
         f"* Scenarios: {', '.join(cfg['scenarios'])}",
         f"* Seeds ({len(cfg['seeds'])}): {cfg['seeds']}",
-        f"* Training steps per learned model: {cfg['train_timesteps']:,}",
+        (f"* Training steps per learned model: {cfg['train_timesteps']:,}" if cfg.get('train_timesteps')
+         else "* Learned policies: served (synthetic-trained) checkpoints; not retrained for this suite"),
         f"* Series length: {cfg['n_bars']} bars; horizon {cfg['horizon_steps']} bars; "
         + (f"order = {100 * cfg['order_participation']:.1f}% of the window's expected volume ({cfg['side']})"
            if cfg.get('order_participation') else f"order {int(cfg['target_inventory']):,} shares ({cfg['side']})"),
@@ -120,9 +121,18 @@ def main() -> None:
         lines.append(f"* {r.treatment} vs {r.control}: Δ = {r['mean']:+.2f} bps, 95% CI [{r.ci_low:+.2f}, {r.ci_high:+.2f}] → {reading(r)}")
     lines.append("")
 
-    lines += ["## Regime detection quality (causal HMM vs the true latent regime, test region)", "",
-              f"* Runs: {len(hmm)}; mean adjusted Rand index {hmm['test_ari'].mean():.3f} (min {hmm['test_ari'].min():.3f}, max {hmm['test_ari'].max():.3f})",
-              f"* Mean accuracy {100 * hmm['test_accuracy'].mean():.1f}%", ""]
+    if hmm['test_ari'].notna().any():
+        lines += ["## Regime detection quality (causal HMM vs the true latent regime, test region)", "",
+                  f"* Runs: {hmm['test_ari'].notna().sum()}; mean adjusted Rand index {hmm['test_ari'].mean():.3f} "
+                  f"(min {hmm['test_ari'].min():.3f}, max {hmm['test_ari'].max():.3f})",
+                  f"* Mean accuracy {100 * hmm['test_accuracy'].mean():.1f}%", ""]
+    if cfg.get("note"):
+        lines += ["## Notes", "", f"* {cfg['note']}."]
+        if cfg.get("source"):
+            lines[-1] += f" Source: `{cfg['source']}`."
+        if cfg.get("missing_models"):
+            lines.append(f"* Not evaluated (no trained checkpoint): {', '.join(cfg['missing_models'])}.")
+        lines.append("")
     out = os.path.join(d, "REPORT.md")
     open(out, "w", encoding="utf-8").write("\n".join(lines))
     print(f"wrote {out}")

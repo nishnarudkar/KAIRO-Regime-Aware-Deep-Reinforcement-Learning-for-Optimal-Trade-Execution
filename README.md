@@ -4,10 +4,13 @@ A research framework and demo platform for executing large parent orders with Ma
 Markov Model regime detection and deep reinforcement learning (DQN / PPO), evaluated against TWAP, VWAP and POV on a
 regime-switching **synthetic** market.
 
-> **Read this first.** On the synthetic markets used here, regime-aware RL does **not** show a robust advantage. Learned
-> policies are about level with TWAP and slightly behind POV, and the apparent gains from regime information do not
-> survive a shuffled-regime control. See [`docs/research_audit.md`](docs/research_audit.md) for the measured results
-> and their limits. All data is synthetic; nothing here is evidence about live trading.
+> **Read this first.** Regime-aware RL does **not** show a robust advantage on this simulator: at a 30-minute horizon,
+> learned policies sit within noise of TWAP/VWAP and behind POV, and the gain from regime features does not survive
+> a shuffled-regime control. At a 90-minute horizon the DQN checkpoint (tuned for 30 minutes) breaks down badly,
+> while PPO stays level with TWAP — a real finding about training/deployment mismatch, not about regimes. A small
+> (5-day) transfer test on real AAPL bars is more encouraging but far too small to draw conclusions from. See
+> [`docs/research_audit.md`](docs/research_audit.md) for the full results and their limits. Data is synthetic except
+> for the labelled real-data test; nothing here is evidence about live trading.
 
 ---
 
@@ -18,12 +21,16 @@ regime-switching **synthetic** market.
 > **RQ3** Does regime-awareness help in turbulent markets and beat a shuffled-regime control?
 > **RQ4** Is the effect the same for value-based (DQN) and policy-gradient (PPO) agents?
 
-| | Result (8 seeds × 6 scenarios × 30 paired windows, 100k training steps) |
-|---|---|
-| RQ1 | Not robust: regime-aware agents beat TWAP by ~1.6–1.8 bps of ~23; no learned policy beats POV |
-| RQ2 | No clear evidence (DQN −0.25 bps, CI includes 0; PPO −3.6 bps, explained by the control) |
-| RQ3 | Not supported: regime-aware PPO does not beat its shuffled control |
-| RQ4 | No consistent effect across algorithms |
+| | Main suite (5 seeds × 6 scenarios × 30 windows, 30-min horizon) | Long horizon (90 min) |
+|---|---|---|
+| RQ1 | Not robust: every learned policy within ~0.7 bps of TWAP/VWAP (CI includes 0); all costlier than POV | **DQN breaks down** (+27–29 bps vs TWAP); PPO stays level with TWAP |
+| RQ2 | No clear evidence for either algorithm (CI includes 0) | DQN nominally better regime-aware, but tracks its instability, not a regime effect |
+| RQ3 | Not supported: neither algorithm beats its shuffled-regime control | Same picture; one CI excludes 0 but reads as DQN instability, not a clean effect |
+| RQ4 | No consistent effect across algorithms | DQN and PPO diverge sharply at longer horizon |
+
+A small (5-day) transfer test on real AAPL bars is more encouraging (every learned policy nominally beats TWAP/VWAP)
+but far too small a sample to draw conclusions from. Full numbers, tuning process and caveats:
+[`docs/research_audit.md`](docs/research_audit.md), [`docs/tuning.md`](docs/tuning.md).
 
 ---
 
@@ -98,17 +105,18 @@ python -m pytest tests/                                          # 198 tests pas
 
 ```bash
 python scripts/train_models.py                                   # writes models/*.zip + registry.json
-python scripts/tune_agents.py                                    # hyperparameter tuning across learning rates & gamma
+python scripts/tune_agents.py --jobs 30 --timesteps 150000        # learning-rate / network-width / entropy search
 ```
 
-### DagsHub MLflow Remote Tracking
+Tuning selects hyperparameters on seeds and scenarios disjoint from every experiment above (see
+[`docs/tuning.md`](docs/tuning.md)); `scripts/train_models.py` and `scripts/run_experiments.py` already use the
+selected values by default.
 
-```bash
-# Optional: Set credentials to stream experiment logs directly to DagsHub MLflow
-$env:DAGSHUB_USERNAME="nishnarudkar"
-$env:DAGSHUB_TOKEN="<your_token>"
-python scripts/run_experiments.py --mlflow
-```
+### Optional: DagsHub MLflow remote tracking
+
+Set `DAGSHUB_USERNAME` / `DAGSHUB_TOKEN` and the legacy `scripts/train.py` / `scripts/run_ab_experiment.py` /
+`scripts/run_ppo_experiment.py` demo runners will log to DagsHub's MLflow instead of the local `mlruns/` store
+(`src/utils/dagshub_utils.py`). The main pipeline (`train_models.py`, `run_experiments.py`) does not use MLflow.
 
 ### Run the API
 
@@ -130,8 +138,11 @@ npm run dev                                                      # http://localh
 ### Reproduce the research results
 
 ```bash
-python scripts/run_experiments.py --seeds 42 123 777 2024 31415 7 99 1234 --timesteps 100000 --jobs 16
-python scripts/make_report.py                                    # writes results/REPORT.md from the result files
+python scripts/run_experiments.py --seeds 42 123 777 2024 31415 --timesteps 150000 --jobs 26        # results/
+python scripts/run_experiments.py --horizon 90 --n-bars 6000 --seeds 42 123 777 2024 \
+    --timesteps 150000 --jobs 26 --results-dir results/long_horizon                                  # 90-min horizon
+python scripts/evaluate_real_data.py --out results/real_data                                          # real AAPL bars
+python scripts/make_report.py                              # writes REPORT.md for each suite (pass --results-dir)
 ```
 
 ### Docker
@@ -197,4 +208,6 @@ tests/             198 unit tests (causality, protocol, API hardening, end-to-en
 
 ## Known limitations
 
-Synthetic & real market evaluation; single order size and horizon; participation cap bounds completion rate in thin scenarios; Alpaca execution operates in paper/mock mode. Details in [`docs/research_audit.md`](docs/research_audit.md).
+Mostly synthetic data (one real 5-day transfer test); order size now scales with liquidity, but hyperparameters were
+tuned only once on 2 seeds; the DQN checkpoint does not generalise from a 30- to a 90-minute horizon; Alpaca
+execution remains mock-mode. Details in [`docs/research_audit.md`](docs/research_audit.md).
